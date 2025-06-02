@@ -1,13 +1,70 @@
-# HN For Mac OS
+# HN Menu Bar Reader
 
-We have a nice reader for HN here
+A simple macOS menu bar app that shows Hacker News stories. Started as a basic reader, ended up tracking way more data than I originally planned.
 
-It gets the top 25 stories
+## What it does
 
-It presents the titles of them in a dropdown from the system bar at the top of Mac OS
+Shows the top 25 HN stories in your menu bar. Click one to read it. Pretty straightforward.
 
-The Icon for it is the letters "HN"
+But then I got carried away and added a bunch of analytics because why not track everything, right?
 
-It will simply use the HN API to get the stories to title and link to
+## The basics
 
-Clicking the link opens the comments, not the story's actual link
+- Top 25 stories refresh every 5 minutes
+- Shows upvote counts with that little triangle ▲
+- Click a story to open the HN comments page
+- Stories line up nicely (took way too long to get the spacing right)
+
+## The analytics rabbit hole
+
+Once I started tracking clicks, I couldn't stop:
+
+- **SQLite database** stores every click with way too much metadata
+- **Link stats** shows which stories you clicked most (prepare to be judged by your own habits)
+- **Word cloud** turns your reading history into a pretty visualization
+- Tracks when stories first appeared because timestamps are fun
+
+## Getting it running
+
+```bash
+git clone this-repo
+cd mac_hn
+npm install
+npm start
+```
+
+The app shows up in your menu bar. Look for the HN icon.
+
+## What gets tracked
+
+Every time you click a story:
+- When you clicked it
+- The story title and points
+- How many comments it had
+- When I first saw that story
+- Probably more stuff I forgot about
+
+All stored in a local SQLite file called `clicks.db`.
+
+## Development stuff
+
+Has live reloading because constantly restarting Electron gets old fast. Change code, app restarts automatically.
+
+## Why this exists
+
+Started wanting a simple HN reader in my menu bar. Ended up with a personal analytics engine for my reading habits. Classic feature creep.
+
+The word cloud is probably overkill but it looks cool.
+
+## Database tables
+
+Two tables because I overthought this:
+
+**stories** - when I first saw each story
+**clicks** - every single click with full context
+
+The schema is in the code if you care about the details.
+
+---
+
+Uses the official HN API. Data stays local. Your reading habits are your business.
