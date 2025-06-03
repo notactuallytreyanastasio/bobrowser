@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Reading Tracker Bookmarklet</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .bookmarklet {
+            background: #007aff;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            display: inline-block;
+            margin: 20px 0;
+        }
+        .test-area {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        button {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #218838;
+        }
+        #output {
+            background: #343a40;
+            color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: Monaco, monospace;
+            font-size: 12px;
+            margin-top: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🐛 Debug Reading Tracker Bookmarklet</h1>
+    
+    <div class="test-area">
+        <h3>Step 1: Test API Connection</h3>
+        <button onclick="testAPI()">Test API Connection</button>
+        <div id="api-status"></div>
+    </div>
+    
+    <div class="test-area">
+        <h3>Step 2: Test Article Extraction</h3>
+        <button onclick="testExtraction()">Extract This Page Content</button>
+        <div id="extraction-status"></div>
+    </div>
+    
+    <div class="test-area">
+        <h3>Step 3: Test Full Save Process</h3>
+        <button onclick="testFullSave()">Save This Page (Debug Mode)</button>
+        <div id="save-status"></div>
+    </div>
+    
+    <div class="test-area">
+        <h3>Step 4: Working Bookmarklet (Verbose)</h3>
+        <p>This version shows detailed console output:</p>
+        <a href="javascript:(function(){
+            console.log('📚 Reading Tracker Debug Bookmarklet Started');
+            
+            function showNotification(message, isError = false) {
+                console.log('Notification:', message);
+                const notification = document.createElement('div');
+                notification.style.cssText = `position:fixed;top:20px;right:20px;background:${isError ? '#f44336' : '#4CAF50'};color:white;padding:15px 20px;border-radius:8px;z-index:10000;font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:300px;`;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+                setTimeout(() => notification.remove(), 4000);
+            }
+            
+            showNotification('🔄 Starting article save...');
+            
+            fetch('http://127.0.0.1:3002/api/ping')
+            .then(response => {
+                console.log('API ping response:', response.status);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                console.log('API connected:', data);
+                showNotification('✅ API connected, extracting content...');
+                
+                const title = document.querySelector('h1, .title, [class*=title], [class*=headline]')?.textContent || document.title;
+                const contentEl = document.querySelector('article, .content, .post, .entry, main') || document.body;
+                const content = contentEl.innerHTML;
+                const textContent = contentEl.textContent;
+                const wordCount = textContent.split(/\\s+/).filter(w => w.length > 0).length;
+                const author = document.querySelector('[class*=author], .byline, [rel=author]')?.textContent || null;
+                
+                console.log('Extracted data:', { title: title.substring(0, 50), wordCount, author });
+                
+                const articleData = {
+                    url: window.location.href,
+                    title: title.trim(),
+                    author: author ? author.trim() : null,
+                    publishDate: new Date().toISOString(),
+                    content: content,
+                    textContent: textContent.trim(),
+                    wordCount: wordCount,
+                    readingTime: 0
+                };
+                
+                showNotification('📡 Saving to Reading Tracker...');
+                
+                return fetch('http://127.0.0.1:3002/api/articles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(articleData)
+                });
+            })
+            .then(response => {
+                console.log('Save response:', response.status);
+                if (!response.ok) throw new Error(`Save failed: HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(result => {
+                console.log('Save result:', result);
+                showNotification(`✅ Article saved successfully! (ID: ${result.id})`);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification(`❌ Error: ${error.message}`, true);
+            });
+        })()" class="bookmarklet">📚 Debug Save Article</a>
+    </div>
+    
+    <div class="test-area">
+        <h3>Debug Output</h3>
+        <div id="output">Ready for testing...</div>
+    </div>
+
+    <article style="border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 8px;">
+        <h1>Sample Article: Testing the Reading Tracker Bookmarklet</h1>
+        <p><em>By Debug Author • Today</em></p>
+        
+        <p>This is a sample article to test the Reading Tracker bookmarklet functionality. It contains enough content to make it worth saving.</p>
+        
+        <p>The bookmarklet should be able to extract this content automatically and save it to your Reading Tracker database.</p>
+        
+        <p>If everything works correctly, you should see popup notifications and console logs indicating the save process.</p>
+    </article>
+
+    <script>
+        function log(message) {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString();
+            output.innerHTML += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+
+        async function testAPI() {
+            const status = document.getElementById('api-status');
+            log('Testing API connection...');
+            
+            try {
+                const response = await fetch('http://127.0.0.1:3002/api/ping');
+                const data = await response.json();
+                status.innerHTML = '✅ API Connected: ' + JSON.stringify(data);
+                log('✅ API test successful');
+            } catch (error) {
+                status.innerHTML = '❌ API Error: ' + error.message;
+                log('❌ API test failed: ' + error.message);
+            }
+        }
+
+        function testExtraction() {
+            const status = document.getElementById('extraction-status');
+            log('Testing content extraction...');
+            
+            const title = document.querySelector('h1, .title, [class*=title], [class*=headline]')?.textContent || document.title;
+            const contentEl = document.querySelector('article, .content, .post, .entry, main') || document.body;
+            const textContent = contentEl.textContent;
+            const wordCount = textContent.split(/\s+/).filter(w => w.length > 0).length;
+            const author = document.querySelector('[class*=author], .byline, [rel=author]')?.textContent || null;
+            
+            const result = {
+                title: title.substring(0, 100),
+                wordCount,
+                author,
+                hasContent: contentEl !== document.body
+            };
+            
+            status.innerHTML = '✅ Extraction successful: ' + JSON.stringify(result, null, 2);
+            log('✅ Content extracted: ' + JSON.stringify(result));
+        }
+
+        async function testFullSave() {
+            const status = document.getElementById('save-status');
+            log('Testing full save process...');
+            
+            try {
+                // Test API
+                log('Step 1: Testing API...');
+                const pingResponse = await fetch('http://127.0.0.1:3002/api/ping');
+                const pingData = await pingResponse.json();
+                log('✅ API connected: ' + JSON.stringify(pingData));
+                
+                // Extract content
+                log('Step 2: Extracting content...');
+                const title = document.querySelector('h1, .title, [class*=title], [class*=headline]')?.textContent || document.title;
+                const contentEl = document.querySelector('article, .content, .post, .entry, main') || document.body;
+                const content = contentEl.innerHTML;
+                const textContent = contentEl.textContent;
+                const wordCount = textContent.split(/\s+/).filter(w => w.length > 0).length;
+                const author = document.querySelector('[class*=author], .byline, [rel=author]')?.textContent || null;
+                
+                const articleData = {
+                    url: window.location.href,
+                    title: title.trim(),
+                    author: author ? author.trim() : null,
+                    publishDate: new Date().toISOString(),
+                    content: content,
+                    textContent: textContent.trim(),
+                    wordCount: wordCount,
+                    readingTime: 0
+                };
+                
+                log('✅ Content extracted, saving...');
+                
+                // Save article
+                log('Step 3: Saving article...');
+                const saveResponse = await fetch('http://127.0.0.1:3002/api/articles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(articleData)
+                });
+                
+                const saveResult = await saveResponse.json();
+                log('✅ Save successful: ' + JSON.stringify(saveResult));
+                
+                status.innerHTML = '✅ Full save successful! Article ID: ' + saveResult.id;
+                
+                // Show popup notification
+                const notification = document.createElement('div');
+                notification.style.cssText = 'position:fixed;top:20px;right:20px;background:#4CAF50;color:white;padding:15px 20px;border-radius:8px;z-index:10000;font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+                notification.textContent = '✅ Test save successful!';
+                document.body.appendChild(notification);
+                setTimeout(() => notification.remove(), 3000);
+                
+            } catch (error) {
+                log('❌ Save failed: ' + error.message);
+                status.innerHTML = '❌ Save failed: ' + error.message;
+                
+                // Show error notification
+                const notification = document.createElement('div');
+                notification.style.cssText = 'position:fixed;top:20px;right:20px;background:#f44336;color:white;padding:15px 20px;border-radius:8px;z-index:10000;font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+                notification.textContent = '❌ Save failed: ' + error.message;
+                document.body.appendChild(notification);
+                setTimeout(() => notification.remove(), 3000);
+            }
+        }
+    </script>
+</body>
+</html>
