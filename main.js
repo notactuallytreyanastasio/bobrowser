@@ -663,25 +663,19 @@ async function fetchPinboardPopular() {
     const html = response.data;
     const bookmarks = [];
     
-    // Multiple patterns to try
-    const patterns = [
-      /<a href="([^"]+)">\s*([^<]+)\s*<\/a>\s*\[(\d+)\]/g,
-      /<a href="([^"]+)">([^<]+)<\/a>.*?\[(\d+)\]/g,
-      /<a[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>.*?\[(\d+)\]/g
-    ];
+    // Updated pattern for new Pinboard HTML structure
+    // Format: <a class="bookmark_title" href="URL">TITLE</a> ... <a class="bookmark_count">COUNT</a>
+    const pattern = /<a[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>.*?>(\d+)<\/a>/g;
     
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(html)) !== null && bookmarks.length < 15) {
-        bookmarks.push({
-          id: `pinboard_${bookmarks.length}`,
-          title: match[2].trim(),
-          url: match[1],
-          points: parseInt(match[3]) || 0,
-          comments: 0
-        });
-      }
-      if (bookmarks.length > 0) break;
+    let match;
+    while ((match = pattern.exec(html)) !== null && bookmarks.length < 15) {
+      bookmarks.push({
+        id: `pinboard_${bookmarks.length}`,
+        title: match[2].trim(),
+        url: match[1],
+        points: parseInt(match[3]) || 0,
+        comments: 0
+      });
     }
     
     // If regex parsing fails, return empty array rather than hardcoded fallback data
