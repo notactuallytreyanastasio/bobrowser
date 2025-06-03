@@ -3,6 +3,8 @@ const axios = require('axios');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
+const express = require('express');
+const cors = require('cors');
 require('dotenv').config();
 
 if (process.env.NODE_ENV === 'development') {
@@ -17,7 +19,9 @@ let db = null;
 let currentMenuTemplate = null;
 let redditToken = null;
 let redditCache = {};
+let apiServer = null;
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+const API_PORT = 3002;
 
 function generateFakeData() {
   if (!db) return;
@@ -137,6 +141,50 @@ function initDatabase() {
     comments INTEGER,
     first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  
+  // Create articles table for saved content from Safari extension
+  db.run(`CREATE TABLE IF NOT EXISTS articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    author TEXT,
+    publish_date TEXT,
+    content TEXT NOT NULL,
+    text_content TEXT NOT NULL,
+    word_count INTEGER,
+    reading_time INTEGER,
+    saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    tags TEXT,
+    notes TEXT
+  )`);
+  
+  // Create full-text search table for articles
+  db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+    title,
+    author,
+    text_content,
+    tags,
+    content='articles',
+    content_rowid='id'
+  )`);
+  
+  // Triggers to keep FTS table in sync
+  db.run(`CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
+    INSERT INTO articles_fts(rowid, title, author, text_content, tags) 
+    VALUES (new.id, new.title, new.author, new.text_content, new.tags);
+  END`);
+  
+  db.run(`CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
+    INSERT INTO articles_fts(articles_fts, rowid, title, author, text_content, tags) 
+    VALUES ('delete', old.id, old.title, old.author, old.text_content, old.tags);
+  END`);
+  
+  db.run(`CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
+    INSERT INTO articles_fts(articles_fts, rowid, title, author, text_content, tags) 
+    VALUES ('delete', old.id, old.title, old.author, old.text_content, old.tags);
+    INSERT INTO articles_fts(rowid, title, author, text_content, tags) 
+    VALUES (new.id, new.title, new.author, new.text_content, new.tags);
+  END`);
   
   db.run(`ALTER TABLE clicks ADD COLUMN points INTEGER`, () => {});
   db.run(`ALTER TABLE clicks ADD COLUMN comments INTEGER`, () => {});
@@ -645,6 +693,10 @@ async function updateMenu() {
       click: showWordCloud
     },
     {
+      label: 'READING LIBRARY',
+      click: showArticleLibrary
+    },
+    {
       label: 'Refresh',
       click: updateMenu
     },
@@ -681,8 +733,377 @@ async function updateMenu() {
   tray.setContextMenu(contextMenu);
 }
 
+// Article management functions for Safari extension API
+function saveArticle(articleData, callback) {
+  if (!db) {
+    callback(new Error('Database not initialized'));
+    return;
+  }
+
+  const {
+    url, title, author, publishDate, content, textContent, 
+    wordCount, readingTime, tags = null, notes = null
+  } = articleData;
+
+  db.run(`INSERT OR REPLACE INTO articles 
+    (url, title, author, publish_date, content, text_content, word_count, reading_time, tags, notes) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [url, title, author, publishDate, content, textContent, wordCount, readingTime, tags, notes],
+    function(err) {
+      if (err) {
+        console.error('Error saving article:', err);
+        callback(err);
+      } else {
+        console.log('Article saved with ID:', this.lastID);
+        callback(null, { id: this.lastID, message: 'Article saved successfully' });
+      }
+    }
+  );
+}
+
+function getArticles(limit = 50, offset = 0, callback) {
+  if (!db) {
+    callback(new Error('Database not initialized'));
+    return;
+  }
+
+  db.all(`SELECT * FROM articles 
+          ORDER BY saved_at DESC 
+          LIMIT ? OFFSET ?`, 
+    [limit, offset], callback);
+}
+
+function searchArticles(query, callback) {
+  if (!db) {
+    callback(new Error('Database not initialized'));
+    return;
+  }
+
+  db.all(`SELECT articles.*, snippet(articles_fts, -1, '<mark>', '</mark>', '...', 64) as snippet
+          FROM articles_fts 
+          JOIN articles ON articles.id = articles_fts.rowid
+          WHERE articles_fts MATCH ?
+          ORDER BY rank
+          LIMIT 20`, 
+    [query], callback);
+}
+
+function getArticleStats(callback) {
+  if (!db) {
+    callback(new Error('Database not initialized'));
+    return;
+  }
+
+  db.get(`SELECT 
+    COUNT(*) as total_articles,
+    SUM(word_count) as total_words,
+    AVG(word_count) as avg_words,
+    COUNT(CASE WHEN saved_at > datetime('now', '-7 days') THEN 1 END) as week_articles,
+    COUNT(CASE WHEN saved_at > datetime('now', '-30 days') THEN 1 END) as month_articles
+    FROM articles`, callback);
+}
+
+// Initialize API server for Safari extension communication
+function initApiServer() {
+  console.log('Initializing API server...');
+  
+  const server = express();
+  
+  // More permissive CORS for development
+  server.use(cors({
+    origin: true,
+    credentials: true
+  }));
+  
+  server.use(express.json({ limit: '10mb' }));
+  
+  // Simple test endpoint first
+  server.get('/test', (req, res) => {
+    console.log('Test endpoint hit');
+    res.send('API server is working!');
+  });
+  
+  // Health check endpoint
+  server.get('/api/ping', (req, res) => {
+    console.log('Ping endpoint hit');
+    res.json({ status: 'ok', timestamp: Date.now() });
+  });
+  
+  // Add error handling middleware
+  server.use((err, req, res, next) => {
+    console.error('API Error:', err);
+    res.status(500).json({ error: err.message });
+  });
+  
+  // Save article from Safari extension
+  server.post('/api/articles', (req, res) => {
+    console.log('API: Saving article from Safari extension');
+    
+    saveArticle(req.body, (err, result) => {
+      if (err) {
+        console.error('API: Error saving article:', err);
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json(result);
+      }
+    });
+  });
+  
+  // Get articles
+  server.get('/api/articles', (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    getArticles(limit, offset, (err, articles) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ articles });
+      }
+    });
+  });
+  
+  // Search articles
+  server.get('/api/articles/search', (req, res) => {
+    const query = req.query.q;
+    if (!query) {
+      return res.status(400).json({ error: 'Query parameter "q" is required' });
+    }
+    
+    searchArticles(query, (err, results) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ results });
+      }
+    });
+  });
+  
+  // Get article statistics
+  server.get('/api/articles/stats', (req, res) => {
+    getArticleStats((err, stats) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json(stats);
+      }
+    });
+  });
+  
+  // Open specific views in the app
+  server.post('/api/open/library', (req, res) => {
+    showArticleLibrary();
+    res.json({ message: 'Library opened' });
+  });
+  
+  server.post('/api/open/analytics', (req, res) => {
+    showWordCloud();
+    res.json({ message: 'Analytics opened' });
+  });
+  
+  // Start server
+  try {
+    console.log(`Attempting to start server on port ${API_PORT}...`);
+    
+    apiServer = server.listen(API_PORT, '127.0.0.1', () => {
+      console.log(`✅ Reading Tracker API server running on http://127.0.0.1:${API_PORT}`);
+      console.log('Server address:', apiServer.address());
+      
+      // Test the server immediately after startup
+      setTimeout(() => {
+        const http = require('http');
+        const req = http.get(`http://127.0.0.1:${API_PORT}/test`, (res) => {
+          console.log('✅ Self-test successful, server is responding');
+        });
+        req.on('error', (err) => {
+          console.error('❌ Self-test failed:', err.message);
+        });
+      }, 500);
+    });
+    
+    apiServer.on('error', (err) => {
+      console.error('❌ API Server Error:', err);
+      if (err.code === 'EADDRINUSE') {
+        console.log(`Port ${API_PORT} is already in use.`);
+      }
+    });
+    
+    apiServer.on('listening', () => {
+      console.log('✅ Server is listening on port', API_PORT);
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to start API server:', error);
+  }
+}
+
+function showArticleLibrary() {
+  const win = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    title: 'Reading Library',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reading Library</title>
+    <style>
+        body { 
+          margin: 0; 
+          padding: 20px; 
+          font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+          background: #f8f9fa; 
+        }
+        .header {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .search-box {
+          width: 100%;
+          padding: 12px;
+          font-size: 16px;
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          margin-bottom: 15px;
+        }
+        .article {
+          background: white;
+          padding: 20px;
+          margin-bottom: 15px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          cursor: pointer;
+          transition: transform 0.2s ease;
+        }
+        .article:hover {
+          transform: translateY(-2px);
+        }
+        .article-title {
+          font-size: 18px;
+          font-weight: 600;
+          margin-bottom: 8px;
+          color: #333;
+        }
+        .article-meta {
+          font-size: 14px;
+          color: #666;
+          margin-bottom: 10px;
+        }
+        .article-excerpt {
+          font-size: 14px;
+          line-height: 1.6;
+          color: #555;
+        }
+        .loading {
+          text-align: center;
+          padding: 40px;
+          color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📚 Reading Library</h1>
+        <input type="text" class="search-box" id="searchBox" placeholder="Search your saved articles...">
+        <div id="stats"></div>
+    </div>
+    <div id="articles" class="loading">Loading articles...</div>
+    
+    <script>
+        let allArticles = [];
+        
+        async function loadArticles() {
+            try {
+                const response = await fetch('http://127.0.0.1:3002/api/articles');
+                const data = await response.json();
+                allArticles = data.articles || [];
+                displayArticles(allArticles);
+                loadStats();
+            } catch (error) {
+                document.getElementById('articles').innerHTML = '<div style="text-align: center; color: red;">Error loading articles</div>';
+            }
+        }
+        
+        async function loadStats() {
+            try {
+                const response = await fetch('http://127.0.0.1:3002/api/articles/stats');
+                const stats = await response.json();
+                document.getElementById('stats').innerHTML = 
+                  \`Total: \${stats.total_articles} articles • \${Math.round(stats.total_words/1000)}k words • Avg: \${Math.round(stats.avg_words)} words/article\`;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        function displayArticles(articles) {
+            const container = document.getElementById('articles');
+            if (articles.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #666;">No articles found</div>';
+                return;
+            }
+            
+            container.innerHTML = articles.map(article => \`
+                <div class="article" onclick="openArticle('\${article.url}')">
+                    <div class="article-title">\${escapeHtml(article.title)}</div>
+                    <div class="article-meta">
+                        \${article.author ? \`By \${escapeHtml(article.author)} • \` : ''}
+                        \${new Date(article.saved_at).toLocaleDateString()} • 
+                        \${article.word_count || 0} words
+                    </div>
+                    <div class="article-excerpt">\${escapeHtml((article.text_content || '').substring(0, 200))}...</div>
+                </div>
+            \`).join('');
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function openArticle(url) {
+            require('electron').shell.openExternal(url);
+        }
+        
+        document.getElementById('searchBox').addEventListener('input', async (e) => {
+            const query = e.target.value.trim();
+            if (query) {
+                try {
+                    const response = await fetch(\`http://127.0.0.1:3002/api/articles/search?q=\${encodeURIComponent(query)}\`);
+                    const data = await response.json();
+                    displayArticles(data.results || []);
+                } catch (error) {
+                    console.error('Search error:', error);
+                }
+            } else {
+                displayArticles(allArticles);
+            }
+        });
+        
+        loadArticles();
+    </script>
+</body>
+</html>`;
+
+  win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
+}
+
 app.whenReady().then(() => {
+  console.log('App ready, initializing components...');
   initDatabase();
+  setTimeout(() => {
+    console.log('Starting API server after database init...');
+    initApiServer();
+  }, 1000);
   createTray();
 });
 
