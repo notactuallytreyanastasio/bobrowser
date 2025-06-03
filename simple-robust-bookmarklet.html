@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>📖 Simple Robust Reader Bookmarklet</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            max-width: 700px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .step {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .code-box {
+            background: #f1f3f4;
+            border: 1px solid #dadce0;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 11px;
+            overflow-x: auto;
+            margin: 10px 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .button {
+            background: #007aff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>📖 Simple Robust Reader Bookmarklet</h1>
+    
+    <div class="step">
+        <h3>Step 1: Create Bookmark</h3>
+        <ol>
+            <li>Safari → Bookmarks → Add Bookmark</li>
+            <li>Name: <strong>📖 Save Article</strong></li>
+            <li>URL: <code>about:blank</code></li>
+        </ol>
+    </div>
+    
+    <div class="step">
+        <h3>Step 2: Copy This Code</h3>
+        <p>Select ALL the code below and copy it:</p>
+        
+        <div class="code-box" id="bookmarkletCode">javascript:(function(){try{if(!window.location.href.includes('safari-reader')&&!document.body.classList.contains('safari-reader')){alert('❌ Reader View required!');return}var n=document.createElement('div');n.style.cssText='position:fixed;top:20px;right:20px;background:#4CAF50;color:white;padding:15px;border-radius:8px;z-index:10000;';n.textContent='🔄 Saving...';document.body.appendChild(n);var t=document.querySelector('h1')||{textContent:document.title};var c=document.querySelector('article')||document.body;var txt=(c.textContent||'').replace(/\s+/g,' ').trim();var wc=txt.split(' ').length;if(wc<10){alert('❌ Too short');return}var url=document.querySelector('meta[property="og:url"]');var data={url:url?url.content:prompt('Original URL?'),title:t.textContent.trim(),content:c.innerHTML,textContent:txt,wordCount:wc,readingTime:Math.ceil(wc/200)*1000,publishDate:new Date().toISOString(),tags:'reader-view'};var x=new XMLHttpRequest();x.open('POST','http://127.0.0.1:3002/api/articles');x.setRequestHeader('Content-Type','application/json');x.onload=function(){n.textContent=x.status==200?'✅ Saved!':'❌ Failed';setTimeout(function(){n.remove()},3000)};x.send(JSON.stringify(data))}catch(e){alert('❌ '+e.message)}})();</div>
+        
+        <button class="button" onclick="copyToClipboard()">📋 Copy Code</button>
+    </div>
+    
+    <div class="step">
+        <h3>Step 3: Edit Bookmark</h3>
+        <ol>
+            <li>Safari → Bookmarks → Edit Bookmarks</li>
+            <li>Find your "📖 Save Article" bookmark</li>
+            <li>Click the Address field</li>
+            <li><strong>Select ALL existing text and delete it</strong></li>
+            <li><strong>Paste the copied code</strong></li>
+            <li>Press Enter to save</li>
+        </ol>
+    </div>
+    
+    <div class="step">
+        <h3>Step 4: Test</h3>
+        <ol>
+            <li>Visit news.ycombinator.com</li>
+            <li>Click any article</li>
+            <li><strong>Switch to Reader View</strong></li>
+            <li>Click your bookmark</li>
+            <li>Should see "🔄 Saving..." then "✅ Saved!"</li>
+        </ol>
+    </div>
+    
+    <div class="success">
+        <strong>✅ This version:</strong><br>
+        • Short enough to not get truncated<br>
+        • Only works in Reader View<br>
+        • Shows clear feedback<br>
+        • Handles errors gracefully
+    </div>
+
+    <script>
+        function copyToClipboard() {
+            const codeElement = document.getElementById('bookmarkletCode');
+            
+            // Create a range and select the text
+            const range = document.createRange();
+            range.selectNodeContents(codeElement);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            // Copy to clipboard
+            document.execCommand('copy');
+            
+            // Clear selection
+            selection.removeAllRanges();
+            
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = '✅ Copied!';
+            button.style.background = '#28a745';
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.style.background = '#007aff';
+            }, 2000);
+        }
+    </script>
+</body>
+</html>

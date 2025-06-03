@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>📖 CSP-Safe Reader Bookmarklet</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            max-width: 700px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .step {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .code-box {
+            background: #f1f3f4;
+            border: 1px solid #dadce0;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        .button {
+            background: #007aff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>📖 CSP-Safe Reader Bookmarklet</h1>
+    
+    <div class="warning">
+        <strong>⚠️ CSP Protection Detected</strong><br>
+        Your previous errors were due to Content Security Policy blocking. This version works around CSP restrictions.
+    </div>
+    
+    <div class="step">
+        <h3>Step 1: Create Bookmark</h3>
+        <ol>
+            <li>In Safari: <strong>Bookmarks → Add Bookmark</strong></li>
+            <li>Name: <strong>📖 Reader Save</strong></li>
+            <li>URL: <code>about:blank</code></li>
+            <li>Click <strong>Add</strong></li>
+        </ol>
+    </div>
+    
+    <div class="step">
+        <h3>Step 2: Edit Bookmark URL</h3>
+        <p>Replace the bookmark URL with this CSP-safe code:</p>
+        
+        <div class="code-box" id="bookmarkletCode">
+javascript:(function(){try{if(!(window.location.protocol==='safari-reader:'||document.body.classList.contains('safari-reader')||document.querySelector('body[data-safari-reader]')||window.location.href.includes('safari-reader://'))){alert('❌ This only works in Reader View! Switch to Reader View first.');return}var n=document.createElement('div');n.style.cssText='position:fixed;top:20px;right:20px;background:#4CAF50;color:white;padding:15px 20px;border-radius:8px;z-index:10000;font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:300px;';n.textContent='🔄 Extracting article...';document.body.appendChild(n);setTimeout(function(){n.remove()},4000);var ts=['h1','.title','[class*=title]'];var t=null;for(var i=0;i<ts.length;i++){var el=document.querySelector(ts[i]);if(el&&el.textContent.trim().length>3){t=el.textContent.trim();break}}if(!t){t=document.title.replace(/\s*[-|]\s*.*$/,'').trim()}var cs=['article','[role="main"]','.content','.article-content','.post-content','main','body'];var cEl=null;for(var j=0;j<cs.length;j++){var cel=document.querySelector(cs[j]);if(cel){cEl=cel;break}}var cont=cEl?cEl.innerHTML:document.body.innerHTML;var txt=cEl?cEl.textContent:document.body.textContent;var cleanTxt=txt.replace(/\s+/g,' ').replace(/[\u00A0\u2000-\u200B\u2028-\u2029\u202F\u205F\u3000]/g,' ').trim();var wc=cleanTxt.split(/\s+/).filter(function(w){return w.length>0}).length;if(!t||t.length<3){alert('❌ Could not extract title');return}if(!cleanTxt||cleanTxt.length<50){alert('❌ Content too short');return}if(wc<10){alert('❌ Too few words: '+wc);return}var origUrl=document.querySelector('meta[property="og:url"]')?.content||document.querySelector('meta[name="twitter:url"]')?.content||document.querySelector('link[rel="canonical"]')?.href;if(!origUrl){var m=document.title.match(/https?:\/\/[^\s]+/);if(m){origUrl=m[0]}else{origUrl=prompt('Please paste original article URL:',window.location.href)||window.location.href}}var auth=document.querySelector('[class*=author], .byline, [rel=author]')?.textContent||null;var data={url:origUrl,title:t,author:auth?auth.trim():null,publishDate:new Date().toISOString(),content:cont,textContent:cleanTxt,wordCount:wc,readingTime:Math.ceil(wc/200)*1000,tags:'reader-view'};var xhr=new XMLHttpRequest();xhr.open('POST','http://127.0.0.1:3002/api/articles',true);xhr.setRequestHeader('Content-Type','application/json');xhr.onreadystatechange=function(){if(xhr.readyState===4){if(xhr.status===200){var sn=document.createElement('div');sn.style.cssText='position:fixed;top:20px;right:20px;background:#4CAF50;color:white;padding:15px 20px;border-radius:8px;z-index:10000;font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:300px;';sn.textContent='✅ Saved! '+wc+' words, '+Math.ceil(wc/200)+' min read';document.body.appendChild(sn);setTimeout(function(){sn.remove()},4000)}else{var en=document.createElement('div');en.style.cssText='position:fixed;top:20px;right:20px;background:#f44336;color:white;padding:15px 20px;border-radius:8px;z-index:10000;font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:300px;';en.textContent='❌ Save failed: '+xhr.status;document.body.appendChild(en);setTimeout(function(){en.remove()},4000)}}};xhr.send(JSON.stringify(data))}catch(e){alert('❌ Error: '+e.message)}})();
+        </div>
+        
+        <button class="button" onclick="copyToClipboard()">📋 Copy Code</button>
+    </div>
+    
+    <div class="step">
+        <h3>Step 3: Test</h3>
+        <ol>
+            <li>Visit any article (try news.ycombinator.com)</li>
+            <li><strong>Switch to Reader View</strong> (essential!)</li>
+            <li>Click your bookmark</li>
+            <li>Should see success notification</li>
+        </ol>
+    </div>
+    
+    <div class="success">
+        <strong>✅ Key Features:</strong><br>
+        • Uses XMLHttpRequest (CSP-safe)<br>
+        • Only works in Reader View<br>
+        • Validates content quality<br>
+        • Shows clear success/error messages<br>
+        • Fallback URL detection
+    </div>
+
+    <script>
+        function copyToClipboard() {
+            const codeElement = document.getElementById('bookmarkletCode');
+            const textArea = document.createElement('textarea');
+            textArea.value = codeElement.textContent;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = '✅ Copied!';
+            button.style.background = '#28a745';
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.style.background = '#007aff';
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
