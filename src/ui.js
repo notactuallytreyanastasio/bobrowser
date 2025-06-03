@@ -641,8 +641,8 @@ function showDatabaseBrowser() {
     console.log('showDatabaseBrowser: Starting...');
     
     const win = new BrowserWindow({
-      width: 1200,
-      height: 800,
+      width: 1400,
+      height: 900,
       title: '🗄️ Database Browser',
       webPreferences: {
         nodeIntegration: true,
@@ -658,151 +658,324 @@ function showDatabaseBrowser() {
       return;
     }
 
-    // Get ALL links from the database, fallback to old clicks table if links is empty
-    console.log('Executing database query...');
-    
-    // First check if links table has any data
-    db.get(`SELECT COUNT(*) as count FROM links`, [], (countErr, countResult) => {
-      if (countErr) {
-        console.error('Error checking links table:', countErr);
-        win.loadURL(`data:text/html,<h1>Database Error</h1><p>${countErr.message}</p>`);
-        return;
-      }
-      
-      const hasLinks = countResult && countResult.count > 0;
-      
-      if (hasLinks) {
-        // Use new links table
-        db.all(`SELECT 
-          l.id,
-          l.story_id,
-          l.title,
-          l.url,
-          l.comments_url,
-          l.source,
-          l.points,
-          l.comments,
-          l.viewed,
-          l.viewed_at,
-          l.engaged,
-          l.engaged_at,
-          l.engagement_count,
-          l.first_seen_at,
-          l.last_seen_at,
-          l.times_appeared,
-          l.tags,
-          (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
-          (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
-          (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
-        FROM links l
-        ORDER BY l.last_seen_at DESC`, [], handleResults);
-      } else {
-        // Fallback to old clicks table
-        db.all(`SELECT 
-          c.id,
-          c.story_id,
-          c.title,
-          c.url,
-          c.comments_url,
-          'legacy' as source,
-          c.points,
-          c.comments,
-          0 as viewed,
-          NULL as viewed_at,
-          0 as engaged,
-          NULL as engaged_at,
-          0 as engagement_count,
-          c.clicked_at as first_seen_at,
-          c.clicked_at as last_seen_at,
-          1 as times_appeared,
-          c.tags,
-          1 as total_clicks,
-          1 as article_clicks,
-          0 as engagements
-        FROM clicks c
-        ORDER BY c.clicked_at DESC 
-        LIMIT 100`, [], handleResults);
-      }
-    });
-    
-    function handleResults(err, rows) {
-      if (err) {
-        console.error('Database query error:', err);
-        win.loadURL(`data:text/html,<h1>Database Error</h1><p>${err.message}</p>`);
-        return;
-      }
-
-      console.log('Database Browser: Found', rows.length, 'click records');
-
-      // Create compact clickable links
-      const linksHtml = rows.map(link => {
-        const hasComments = link.comments_url && link.comments_url !== link.url;
-        const sourceEmoji = link.source === 'hn' ? '🟠' : link.source === 'reddit' ? '👽' : link.source === 'pinboard' ? '📌' : '🔗';
-        
-        // Determine link styling based on engagement and view status
-        let linkStyle = 'color: #0066cc; font-weight: bold;'; // Default: unviewed
-        if (link.viewed) {
-          linkStyle = 'color: #666;'; // Viewed: gray
-        } else if (link.engaged) {
-          linkStyle = 'color: #ff6b35; font-weight: bold;'; // Engaged but not viewed: orange
-        }
-        
-        // Create engagement indicator
-        const engagementInfo = [];
-        if (link.total_clicks > 0) engagementInfo.push(`${link.total_clicks} clicks`);
-        if (link.engagement_count > 0) engagementInfo.push(`${link.engagement_count} engaged`);
-        if (link.times_appeared > 1) engagementInfo.push(`seen ${link.times_appeared}x`);
-        
-        return `
-          <div style="margin-bottom: 4px; line-height: 1.3;">
-            ${sourceEmoji}
-            <a href="#" onclick="openLink('${link.url}')" style="font-size: 12pt; ${linkStyle} text-decoration: none; margin-right: 8px;">
-              ${link.title || 'Untitled'}
-            </a>
-            ${hasComments ? `<a href="#" onclick="openLink('${link.comments_url}')" style="font-size: 10pt; color: #888; text-decoration: none;">[comments]</a>` : ''}
-            <span style="font-size: 10pt; color: #888; margin-left: 8px;">
-              ${link.last_seen_at ? new Date(link.last_seen_at).toLocaleDateString() : ''}
-              ${link.points ? ` • ${link.points}pts` : ''}
-              ${engagementInfo.length > 0 ? ` • ${engagementInfo.join(', ')}` : ''}
-            </span>
+    // Load the enhanced database browser interface
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>🗄️ Database Browser</title>
+        <style>
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            margin: 0; 
+            padding: 20px; 
+            background: #f5f5f5;
+            font-size: 14px;
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            text-align: center;
+          }
+          .header h1 {
+            margin: 0 0 15px 0;
+            font-size: 28px;
+            font-weight: 300;
+          }
+          .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+          }
+          .btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            min-width: 120px;
+          }
+          .btn:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
+            transform: translateY(-1px);
+          }
+          .btn.active {
+            background: rgba(255,255,255,0.4);
+            border-color: rgba(255,255,255,0.6);
+          }
+          .content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-top: 20px;
+          }
+          .loading {
+            padding: 40px;
+            text-align: center;
+            color: #666;
+            font-size: 16px;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          th {
+            background: #f8f9fa;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #e9ecef;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: top;
+          }
+          tr:hover {
+            background-color: #f8f9fa;
+          }
+          .title-link {
+            color: #0066cc;
+            text-decoration: none;
+            font-weight: 500;
+            display: block;
+            margin-bottom: 4px;
+          }
+          .title-link:hover {
+            text-decoration: underline;
+          }
+          .title-link.viewed {
+            color: #666;
+          }
+          .title-link.engaged {
+            color: #ff6b35;
+          }
+          .comments-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 12px;
+          }
+          .comments-link:hover {
+            text-decoration: underline;
+          }
+          .source-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: white;
+          }
+          .source-hn { background: #ff6600; }
+          .source-reddit { background: #ff4500; }
+          .source-pinboard { background: #0066cc; }
+          .source-unknown { background: #666; }
+          .meta {
+            font-size: 12px;
+            color: #666;
+          }
+          .stats {
+            display: flex;
+            gap: 10px;
+            font-size: 11px;
+          }
+          .stat {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 500;
+          }
+          .empty-state {
+            padding: 60px 20px;
+            text-align: center;
+            color: #666;
+          }
+          .empty-state h3 {
+            font-size: 20px;
+            margin-bottom: 8px;
+            font-weight: 300;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>🗄️ Database Browser</h1>
+          <div class="controls">
+            <button class="btn" onclick="loadBagOfLinks()">💎 Bag of Links</button>
+            <button class="btn" onclick="loadUnread()">📖 Unread</button>
+            <button class="btn" onclick="loadRecent()">🕒 Recent</button>
+            <button class="btn" onclick="loadAll()">📋 All Links</button>
           </div>
-        `;
-      }).join('');
+        </div>
+        
+        <div class="content">
+          <div id="results" class="loading">
+            Click a button above to browse your links
+          </div>
+        </div>
 
-      const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Database Browser</title>
-          <style>
-            body { 
-              font-family: system-ui; 
-              margin: 0; 
-              padding: 8px; 
-              background: white; 
-              font-size: 12pt;
-            }
-            a:hover { text-decoration: underline; }
-          </style>
-        </head>
-        <body>
-          ${rows.length === 0 ? '<p>No links found</p>' : linksHtml}
+        <script>
+          const { shell } = require('electron');
           
-          <script>
-            const { shell } = require('electron');
-            function openLink(url) {
-              if (url) {
-                shell.openExternal(url);
-              }
+          function openLink(url) {
+            if (url) {
+              shell.openExternal(url);
             }
-          </script>
-        </body>
-        </html>
-      `;
+          }
+          
+          function truncateTitle(title, maxLength = 100) {
+            if (!title) return 'Untitled';
+            return title.length > maxLength ? title.substring(0, maxLength) + '...' : title;
+          }
+          
+          function formatDate(dateStr) {
+            if (!dateStr) return 'Unknown';
+            return new Date(dateStr).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+          }
+          
+          function setActiveButton(activeBtn) {
+            document.querySelectorAll('.btn').forEach(btn => {
+              btn.classList.remove('active');
+            });
+            activeBtn.classList.add('active');
+          }
+          
+          function renderResults(links, title) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (links.length === 0) {
+              resultsDiv.innerHTML = \`
+                <div class="empty-state">
+                  <h3>No links found</h3>
+                  <p>\${title} returned no results</p>
+                </div>
+              \`;
+              return;
+            }
+            
+            const tableHtml = \`
+              <table>
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Source</th>
+                    <th>Stats</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  \${links.map(link => {
+                    const sourceClass = 'source-' + (link.source || 'unknown');
+                    const titleClass = link.viewed ? 'viewed' : (link.engaged ? 'engaged' : '');
+                    const hasComments = link.comments_url && link.comments_url !== link.url;
+                    
+                    return \`
+                      <tr>
+                        <td>
+                          <a href="#" onclick="openLink('\${link.url}')" class="title-link \${titleClass}">
+                            \${truncateTitle(link.title)}
+                          </a>
+                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}')" class="comments-link">[comments]</a>\` : ''}
+                        </td>
+                        <td>
+                          <span class="source-badge \${sourceClass}">\${link.source || 'unknown'}</span>
+                        </td>
+                        <td>
+                          <div class="stats">
+                            \${link.total_clicks > 0 ? \`<span class="stat">\${link.total_clicks} clicks</span>\` : ''}
+                            \${link.engagement_count > 0 ? \`<span class="stat">\${link.engagement_count} engaged</span>\` : ''}
+                            \${link.times_appeared > 1 ? \`<span class="stat">seen \${link.times_appeared}x</span>\` : ''}
+                            \${link.points ? \`<span class="stat">\${link.points} pts</span>\` : ''}
+                          </div>
+                        </td>
+                        <td>
+                          <div class="meta">\${formatDate(link.last_seen_at)}</div>
+                        </td>
+                      </tr>
+                    \`;
+                  }).join('')}
+                </tbody>
+              </table>
+            \`;
+            
+            resultsDiv.innerHTML = tableHtml;
+          }
+          
+          function showLoading() {
+            document.getElementById('results').innerHTML = '<div class="loading">Loading...</div>';
+          }
+          
+          async function fetchData(endpoint) {
+            try {
+              const response = await fetch('http://127.0.0.1:3002' + endpoint);
+              if (!response.ok) {
+                throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
+              }
+              const data = await response.json();
+              return data.links || [];
+            } catch (error) {
+              console.error('Fetch error:', error);
+              document.getElementById('results').innerHTML = \`<div class="loading">Error: \${error.message}</div>\`;
+              return [];
+            }
+          }
+          
+          async function loadBagOfLinks() {
+            setActiveButton(event.target);
+            showLoading();
+            const links = await fetchData('/api/database/bag-of-links');
+            renderResults(links, 'Hidden Gems');
+          }
+          
+          async function loadUnread() {
+            setActiveButton(event.target);
+            showLoading();
+            const links = await fetchData('/api/database/unread');
+            renderResults(links, 'Unread Stories');
+          }
+          
+          async function loadRecent() {
+            setActiveButton(event.target);
+            showLoading();
+            const links = await fetchData('/api/database/recent');
+            renderResults(links, 'Recently Clicked');
+          }
+          
+          async function loadAll() {
+            setActiveButton(event.target);
+            showLoading();
+            const links = await fetchData('/api/database/all');
+            renderResults(links, 'All Links');
+          }
+        </script>
+      </body>
+      </html>
+    `;
 
-      console.log('Loading database browser HTML...');
-      win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
-    }
+    console.log('Loading enhanced database browser HTML...');
+    win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
 
     win.on('closed', () => {
       console.log('Database browser window closed');

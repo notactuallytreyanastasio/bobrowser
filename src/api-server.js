@@ -169,7 +169,7 @@ function initApiServer() {
     });
   });
 
-  // Database browser endpoint
+  // Database browser endpoints
   server.get('/api/database/clicks', (req, res) => {
     const db = getDatabase();
     if (!db) {
@@ -195,6 +195,102 @@ function initApiServer() {
         res.status(500).json({ error: err.message });
       } else {
         res.json({ clicks: rows });
+      }
+    });
+  });
+
+  // Bag of Links - Hidden gems with low appearance rates and no clicks
+  server.get('/api/database/bag-of-links', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    db.all(`SELECT 
+      l.*,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+    FROM links l 
+    WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') = 0
+    ORDER BY l.times_appeared ASC, RANDOM()
+    LIMIT 10`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ links: rows });
+      }
+    });
+  });
+
+  // Unread stories
+  server.get('/api/database/unread', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    db.all(`SELECT 
+      l.*,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+    FROM links l 
+    WHERE l.viewed = 0 OR l.viewed IS NULL
+    ORDER BY RANDOM()
+    LIMIT 10`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ links: rows });
+      }
+    });
+  });
+
+  // Recent clicked articles
+  server.get('/api/database/recent', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    db.all(`SELECT 
+      l.*,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements,
+      (SELECT MAX(c.clicked_at) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as last_clicked
+    FROM links l 
+    WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') > 0
+    ORDER BY last_clicked DESC
+    LIMIT 10`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ links: rows });
+      }
+    });
+  });
+
+  // All links
+  server.get('/api/database/all', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    db.all(`SELECT 
+      l.*,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+    FROM links l 
+    ORDER BY l.last_seen_at DESC
+    LIMIT 50`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ links: rows });
       }
     });
   });
