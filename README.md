@@ -1,30 +1,43 @@
-# HN Menu Bar Reader
+# Reading Tracker
 
-A simple macOS menu bar app that shows Hacker News stories. Started as a basic reader, ended up tracking way more data than I originally planned.
+A menu bar app for curating and tracking your reading habits across the web. Get content from Hacker News and Reddit, open articles in Safari's reader mode, and build a personal reading analytics database.
 
 ## What it does
 
-Shows the top 25 HN stories in your menu bar. Click one to read it. Pretty straightforward.
+**Content Discovery**
+- Shows top stories from Hacker News and multiple Reddit subs in your menu bar
+- Refreshes every 5 minutes with fresh content
+- Clean interface with upvote counts and truncated titles
 
-But then I got carried away and added a bunch of analytics because why not track everything, right?
+**Smart Reading**
+- Opens links in Safari (your actual browser, not some embedded webview)
+- Designed to work with Safari's reader mode for distraction-free reading
+- Future: Automatically capture and store reader mode content for offline access
 
-## The basics
+**Reading Analytics**
+- SQLite database tracks every click with full context
+- See which stories you actually read vs just browsed
+- Word cloud visualization of your reading patterns
+- Timeline of when stories appeared vs when you clicked them
 
-- Top 25 stories refresh every 5 minutes
-- Shows upvote counts with that little triangle ▲
-- Click a story to open the HN comments page
-- Stories line up nicely (took way too long to get the spacing right)
+## The roadmap
 
-## The analytics rabbit hole
+This app is building toward something bigger:
 
-Once I started tracking clicks, I couldn't stop:
+1. **Phase 1** (current): Menu bar content discovery + click tracking
+2. **Phase 2** (next): Browser extension integration to capture reader mode content
+3. **Phase 3**: Local library of saved articles with full-text search
+4. **Phase 4**: Reading pattern analysis and content recommendations
 
-- **SQLite database** stores every click with way too much metadata
-- **Link stats** shows which stories you clicked most (prepare to be judged by your own habits)
-- **Word cloud** turns your reading history into a pretty visualization
-- Tracks when stories first appeared because timestamps are fun
+## Why this matters
 
-## Getting it running
+Too much content, too little retention. This app helps you:
+- Track what you actually read (vs what you meant to read)
+- Build a searchable personal library of articles
+- Understand your reading patterns and interests
+- Keep good content accessible even when links break
+
+## Getting started
 
 ```bash
 git clone this-repo
@@ -33,38 +46,36 @@ npm install
 npm start
 ```
 
-The app shows up in your menu bar. Look for the HN icon.
+Look for the icon in your menu bar. Click stories to open them in Safari.
 
 ## What gets tracked
 
-Every time you click a story:
-- When you clicked it
-- The story title and points
-- How many comments it had
-- When I first saw that story
-- Probably more stuff I forgot about
+Every click captures:
+- Article title, points, and comment count
+- When the story first appeared in feeds
+- When you actually clicked it
+- URL and source (HN vs Reddit)
 
-All stored in a local SQLite file called `clicks.db`.
+All stored locally in `clicks.db`. Your data stays yours.
 
-## Development stuff
+## Browser extension integration (planned)
 
-Has live reloading because constantly restarting Electron gets old fast. Change code, app restarts automatically.
+The next major feature: a Safari extension that automatically saves reader mode content when you finish reading an article. This creates a permanent, searchable archive of everything you've read.
 
-## Why this exists
+Technical approach:
+- Safari extension detects when reader mode is used
+- Captures clean HTML/text content
+- Syncs with the menu bar app's database
+- Enables full-text search of your reading history
 
-Started wanting a simple HN reader in my menu bar. Ended up with a personal analytics engine for my reading habits. Classic feature creep.
+## Data structure
 
-The word cloud is probably overkill but it looks cool.
+**stories** - tracks when content first appeared  
+**clicks** - full context for every article you opened  
+**articles** (planned) - saved reader mode content with full text
 
-## Database tables
-
-Two tables because I overthought this:
-
-**stories** - when I first saw each story
-**clicks** - every single click with full context
-
-The schema is in the code if you care about the details.
+The analytics reveal patterns: What topics do you actually read vs just scroll past? How much time passes between seeing a story and clicking it? What's your reading velocity by day/week?
 
 ---
 
-Uses the official HN API. Data stays local. Your reading habits are your business.
+Built with Electron, using official APIs from HN and Reddit. Everything stays local until you decide otherwise.
