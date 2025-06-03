@@ -3,13 +3,8 @@ const axios = require('axios');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
-const express = require('express');
-const cors = require('cors');
-const https = require('https');
+// API server dependencies removed - using archive.ph instead
 const crypto = require('crypto');
-const { exec, spawn } = require('child_process');
-const util = require('util');
-const execAsync = util.promisify(exec);
 require('dotenv').config();
 
 if (process.env.NODE_ENV === 'development') {
@@ -202,11 +197,16 @@ function initDatabase(callback) {
     db.run(`ALTER TABLE clicks ADD COLUMN comments INTEGER`, () => {});
     db.run(`ALTER TABLE clicks ADD COLUMN story_added_at DATETIME`, () => {});
     
-    // Add new columns for archiving
-    db.run(`ALTER TABLE articles ADD COLUMN archive_path TEXT`, () => {});
-    db.run(`ALTER TABLE articles ADD COLUMN archive_date DATETIME`, () => {});
-    db.run(`ALTER TABLE articles ADD COLUMN file_size INTEGER`, () => {});
-    db.run(`ALTER TABLE articles ADD COLUMN description TEXT`, () => {});
+    // Add archive URL columns to existing tables
+    db.run(`ALTER TABLE clicks ADD COLUMN archive_url TEXT`, () => {});
+    db.run(`ALTER TABLE stories ADD COLUMN url TEXT`, () => {});
+    db.run(`ALTER TABLE stories ADD COLUMN archive_url TEXT`, () => {});
+    db.run(`ALTER TABLE stories ADD COLUMN tags TEXT`, () => {});
+    db.run(`ALTER TABLE clicks ADD COLUMN tags TEXT`, () => {});
+    db.run(`ALTER TABLE stories ADD COLUMN impression_count INTEGER DEFAULT 0`, () => {});
+    
+    // Create unique index on URL to prevent duplicates
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_url ON stories(url)`, () => {});
     
     // Check if we need to generate fake data
     db.get('SELECT COUNT(*) as count FROM clicks', (err, row) => {
@@ -219,130 +219,51 @@ function initDatabase(callback) {
   });
 }
 
-// Create archives directory if it doesn't exist
-const archivesDir = path.join(__dirname, 'archives');
-if (!fs.existsSync(archivesDir)) {
-  fs.mkdirSync(archivesDir, { recursive: true });
+// Generate archive.ph submission URL to force archiving
+function generateArchiveSubmissionUrl(originalUrl) {
+  // Use archive.ph submission endpoint with ?url= parameter
+  // This forces archiving instead of just searching for existing archives
+  // Format: https://dgy3yyibpm3nn7.archive.ph/?url=ORIGINAL_URL
+  return `https://dgy3yyibpm3nn7.archive.ph/?url=${encodeURIComponent(originalUrl)}`;
 }
 
-// Check if monolith is available in PATH
-async function checkMonolithAvailable() {
-  try {
-    const { stdout } = await execAsync('which monolith');
-    console.log(`✅ Monolith found at: ${stdout.trim()}`);
-    
-    const { stdout: version } = await execAsync('monolith --version');
-    console.log(`📦 Monolith version: ${version.trim()}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Monolith not found in PATH. Please install: cargo install monolith');
-    console.error('   Or visit: https://crates.io/crates/monolith');
-    return false;
-  }
-}
-
-async function archivePageWithMonolith(url, title) {
-  try {
-    console.log(`🗃️  Starting monolith archive for: ${url}`);
-    
-    // Check monolith availability
-    const monolithAvailable = await checkMonolithAvailable();
-    if (!monolithAvailable) {
-      throw new Error('Monolith binary not available');
-    }
-    
-    // Generate unique filename based on URL hash
-    const urlHash = crypto.createHash('md5').update(url).digest('hex');
-    const safeTitle = title.replace(/[^a-zA-Z0-9\s-]/g, '').substring(0, 50);
-    const fileName = `${safeTitle}_${urlHash}.html`;
-    const filePath = path.join(archivesDir, fileName);
-    
-    console.log(`📥 Downloading and bundling: ${url}`);
-    
-    // Run monolith with options for complete archiving
-    const monolithCmd = [
-      'monolith',
-      url,
-      '--output', filePath,
-      '--quiet',            // Suppress verbosity
-      '--isolate',          // Cut off document from the Internet
-      '--no-frames',        // Remove frames and iframes
-      '--no-js',            // Remove JavaScript
-      '--user-agent', '"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"'
-    ].join(' ');
-    
-    console.log(`🔧 Running: ${monolithCmd}`);
-    
-    const { stdout, stderr } = await execAsync(monolithCmd, { 
-      timeout: 30000,  // 30 second timeout
-      maxBuffer: 10 * 1024 * 1024  // 10MB buffer
-    });
-    
-    if (stderr && !stderr.includes('WARN')) {
-      console.warn('⚠️  Monolith warnings:', stderr);
-    }
-    
-    // Check if file was created successfully
-    if (!fs.existsSync(filePath)) {
-      throw new Error('Monolith did not create output file');
-    }
-    
-    const stats = fs.statSync(filePath);
-    console.log(`✅ Archive created: ${filePath} (${(stats.size / 1024).toFixed(1)} KB)`);
-    
-    // Try to extract metadata from the archived file
-    let archivedContent = '';
-    try {
-      archivedContent = fs.readFileSync(filePath, 'utf8');
-    } catch (readError) {
-      console.warn('⚠️  Could not read archived file for metadata extraction');
-    }
-    
-    // Extract basic metadata from HTML
-    const titleMatch = archivedContent.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const descriptionMatch = archivedContent.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
-    const authorMatch = archivedContent.match(/<meta[^>]*name=["']author["'][^>]*content=["']([^"']+)["']/i);
-    
-    const extractedTitle = titleMatch ? titleMatch[1].trim() : title;
-    const description = descriptionMatch ? descriptionMatch[1].trim() : null;
-    const author = authorMatch ? authorMatch[1].trim() : null;
-    
-    return {
-      success: true,
-      filePath,
-      fileName,
-      title: extractedTitle,
-      author,
-      description,
-      archiveDate: new Date().toISOString(),
-      originalUrl: url,
-      fileSize: stats.size
-    };
-    
-  } catch (error) {
-    console.error(`❌ Error archiving page ${url}:`, error.message);
-    return {
-      success: false,
-      error: error.message,
-      originalUrl: url
-    };
-  }
+// Generate direct archive.ph URL for accessing archived version
+function generateArchiveDirectUrl(originalUrl) {
+  // Direct archive.ph format: https://archive.ph/ORIGINAL_URL
+  // This goes directly to the archived page (if it exists)
+  return `https://archive.ph/${originalUrl}`;
 }
 
 function trackStoryAppearance(story) {
   if (db) {
-    db.run('INSERT OR IGNORE INTO stories (story_id, title, points, comments) VALUES (?, ?, ?, ?)', 
-      [story.id, story.title, story.points, story.comments]);
+    const archiveUrl = generateArchiveSubmissionUrl(story.url);
+    
+    // Try to insert new story, ignore if URL already exists due to unique constraint
+    db.run('INSERT OR IGNORE INTO stories (story_id, title, url, archive_url, points, comments, impression_count) VALUES (?, ?, ?, ?, ?, ?, 1)', 
+      [story.id, story.title, story.url, archiveUrl, story.points, story.comments], function(err) {
+        if (err) {
+          console.error('Error inserting story:', err);
+        } else if (this.changes === 0) {
+          // Story already exists, increment impression count
+          db.run('UPDATE stories SET impression_count = impression_count + 1, points = ?, comments = ? WHERE url = ?', 
+            [story.points, story.comments, story.url], (updateErr) => {
+              if (updateErr) {
+                console.error('Error updating impression count:', updateErr);
+              }
+            });
+        }
+      });
   }
 }
 
 function trackClick(storyId, title, url, points, comments) {
   if (db) {
+    const archiveUrl = generateArchiveSubmissionUrl(url);
     db.get('SELECT first_seen_at FROM stories WHERE story_id = ?', [storyId], (err, row) => {
       const storyAddedAt = row ? row.first_seen_at : new Date().toISOString();
       
-      db.run('INSERT INTO clicks (story_id, title, url, points, comments, story_added_at) VALUES (?, ?, ?, ?, ?, ?)', 
-        [storyId, title, url, points, comments, storyAddedAt], function(err) {
+      db.run('INSERT INTO clicks (story_id, title, url, archive_url, points, comments, story_added_at) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+        [storyId, title, url, archiveUrl, points, comments, storyAddedAt], function(err) {
         if (err) {
           console.error('Error tracking click:', err);
         } else {
@@ -352,6 +273,234 @@ function trackClick(storyId, title, url, points, comments) {
     });
   }
 }
+
+// Tagging functions
+function addTagToStory(storyId, tag) {
+  if (db && tag && tag.trim()) {
+    const cleanTag = tag.trim().toLowerCase();
+    
+    // Get current tags for the story
+    db.get('SELECT tags FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+      if (!err) {
+        let currentTags = [];
+        if (row && row.tags) {
+          currentTags = row.tags.split(',').map(t => t.trim()).filter(t => t);
+        }
+        
+        // Add new tag if not already present
+        if (!currentTags.includes(cleanTag)) {
+          currentTags.push(cleanTag);
+          const updatedTags = currentTags.join(',');
+          
+          db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [updatedTags, storyId], (err) => {
+            if (err) {
+              console.error('Error adding tag:', err);
+            } else {
+              console.log(`Added tag "${cleanTag}" to story ${storyId}`);
+              // Refresh the menu to show updated tags
+              updateMenu();
+            }
+          });
+        }
+      }
+    });
+  }
+}
+
+function getStoryTags(storyId, callback) {
+  if (db) {
+    db.get('SELECT tags FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+      if (err) {
+        callback(err, []);
+      } else {
+        const tags = row && row.tags ? row.tags.split(',').map(t => t.trim()).filter(t => t) : [];
+        callback(null, tags);
+      }
+    });
+  } else {
+    callback(null, []);
+  }
+}
+
+function removeTagFromStory(storyId, tagToRemove) {
+  if (db && tagToRemove) {
+    db.get('SELECT tags FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+      if (!err && row && row.tags) {
+        const currentTags = row.tags.split(',').map(t => t.trim()).filter(t => t);
+        const updatedTags = currentTags.filter(tag => tag !== tagToRemove.trim().toLowerCase());
+        const newTagsString = updatedTags.join(',');
+        
+        db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [newTagsString, storyId], (err) => {
+          if (err) {
+            console.error('Error removing tag:', err);
+          } else {
+            console.log(`Removed tag "${tagToRemove}" from story ${storyId}`);
+            updateMenu();
+          }
+        });
+      }
+    });
+  }
+}
+
+function promptForCustomTag(storyId, storyTitle) {
+  // Create a simple HTML form for tag input
+  const tagInputWindow = new BrowserWindow({
+    width: 400,
+    height: 200,
+    title: 'Add Custom Tag',
+    resizable: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Add Custom Tag</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+          padding: 20px;
+          margin: 0;
+          background: #f8f9fa;
+        }
+        .container {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h3 {
+          margin: 0 0 15px 0;
+          color: #333;
+        }
+        .story-title {
+          font-size: 12px;
+          color: #666;
+          margin-bottom: 15px;
+          font-style: italic;
+        }
+        input[type="text"] {
+          width: 100%;
+          padding: 8px 12px;
+          border: 2px solid #ddd;
+          border-radius: 4px;
+          font-size: 14px;
+          margin-bottom: 15px;
+          box-sizing: border-box;
+        }
+        input[type="text"]:focus {
+          outline: none;
+          border-color: #007bff;
+        }
+        .buttons {
+          display: flex;
+          gap: 10px;
+          justify-content: flex-end;
+        }
+        button {
+          padding: 8px 16px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          background: white;
+          cursor: pointer;
+          font-size: 14px;
+        }
+        .btn-primary {
+          background: #007bff;
+          color: white;
+          border-color: #007bff;
+        }
+        .btn-primary:hover {
+          background: #0056b3;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h3>Add Custom Tag</h3>
+        <div class="story-title">${storyTitle}</div>
+        <input type="text" id="tagInput" placeholder="Enter tag name..." autocomplete="off">
+        <div class="buttons">
+          <button onclick="window.close()">Cancel</button>
+          <button class="btn-primary" onclick="addTag()">Add Tag</button>
+        </div>
+      </div>
+      
+      <script>
+        const { ipcRenderer } = require('electron');
+        
+        function addTag() {
+          const tagInput = document.getElementById('tagInput');
+          const tag = tagInput.value.trim();
+          
+          if (tag) {
+            ipcRenderer.send('add-custom-tag', ${storyId}, tag);
+            window.close();
+          }
+        }
+        
+        // Focus input and allow Enter key
+        document.addEventListener('DOMContentLoaded', () => {
+          const input = document.getElementById('tagInput');
+          input.focus();
+          
+          input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+              addTag();
+            }
+          });
+        });
+      </script>
+    </body>
+    </html>
+  `;
+
+  tagInputWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  
+  // Handle the custom tag addition
+  const { ipcMain } = require('electron');
+  ipcMain.removeAllListeners('add-custom-tag'); // Remove previous listeners
+  ipcMain.on('add-custom-tag', (event, storyId, tag) => {
+    addTagToStory(storyId, tag);
+    tagInputWindow.close();
+  });
+}
+
+// Function to get all unique tags from the database
+function getAllUniqueTags(callback) {
+  if (db) {
+    db.all('SELECT DISTINCT tags FROM stories WHERE tags IS NOT NULL AND tags != ""', (err, rows) => {
+      if (err) {
+        callback(err, []);
+        return;
+      }
+      
+      // Parse all tag strings and create a unique set
+      const allTags = new Set();
+      
+      rows.forEach(row => {
+        if (row.tags) {
+          const tags = row.tags.split(',').map(t => t.trim()).filter(t => t);
+          tags.forEach(tag => allTags.add(tag));
+        }
+      });
+      
+      // Convert to sorted array
+      const uniqueTags = Array.from(allTags).sort();
+      callback(null, uniqueTags);
+    });
+  } else {
+    callback(null, []);
+  }
+}
+
+// Removed unused tag menu creation functions - now using dynamic system
 
 // Stats and word cloud functions removed - will be revisited if needed
 
@@ -686,12 +835,27 @@ function createTray() {
 
 async function updateMenu() {
   console.log('Updating menu...');
+  
+  // Get all available tags first for dynamic menus
+  const availableTags = await new Promise((resolve) => {
+    const baseTags = ['tech', 'ai', 'programming', 'business', 'science', 'news', 'interesting', 'later', 'important'];
+    getAllUniqueTags((err, allTags) => {
+      if (err || !allTags.length) {
+        resolve(baseTags);
+      } else {
+        resolve([...new Set([...baseTags, ...allTags])].sort());
+      }
+    });
+  });
+  
   const stories = await fetchHNStories();
   const redditStories = await fetchRedditStories();
   const pinboardStories = await fetchPinboardPopular();
   console.log(`Fetched ${stories.length} HN stories, ${redditStories.length} Reddit stories, and ${pinboardStories.length} Pinboard bookmarks`);
   
   stories.forEach(story => trackStoryAppearance(story));
+  redditStories.forEach(story => trackStoryAppearance(story));
+  pinboardStories.forEach(story => trackStoryAppearance(story));
   
   currentMenuTemplate = [
     {
@@ -703,15 +867,75 @@ async function updateMenu() {
   
   // No need to calculate points width since we're not showing scores
 
-  const storyItems = stories.map(story => ({
-    label: `🟠 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
-    click: () => {
-      // Open the actual article URL instead of HN comments
-      const articleUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
-      trackClick(story.id, story.title, articleUrl, story.points, story.comments);
-      shell.openExternal(articleUrl);
-    }
-  }));
+  const storyItems = stories.map(story => {
+    // Get current tags for display
+    let tagDisplay = '';
+    getStoryTags(story.id, (err, tags) => {
+      if (!err && tags.length > 0) {
+        tagDisplay = ` [${tags.join(', ')}]`;
+      }
+    });
+    
+    return {
+      label: `🟠 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}${tagDisplay}`,
+      click: () => {
+        // Open the actual article URL instead of HN comments
+        const articleUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
+        const archiveSubmissionUrl = generateArchiveSubmissionUrl(articleUrl);
+        const archiveDirectUrl = generateArchiveDirectUrl(articleUrl);
+        trackClick(story.id, story.title, articleUrl, story.points, story.comments);
+        
+        // 1. Open archive.ph submission URL (triggers archiving)
+        shell.openExternal(archiveSubmissionUrl);
+        
+        // 2. Open direct archive.ph link
+        setTimeout(() => {
+          shell.openExternal(archiveDirectUrl);
+        }, 200);
+        
+        // 3. Open the original article LAST (becomes active tab)
+        setTimeout(() => {
+          shell.openExternal(articleUrl);
+        }, 400);
+      },
+      submenu: [
+        {
+          label: '🏷️ Add Tag',
+          submenu: [
+            {
+              label: '✏️ Custom Tag...',
+              click: () => {
+                promptForCustomTag(story.id, story.title);
+              }
+            },
+            { type: 'separator' },
+            { label: 'Available Tags:', enabled: false },
+            { type: 'separator' },
+            ...availableTags.map(tag => ({
+              label: tag,
+              click: () => addTagToStory(story.id, tag)
+            }))
+          ]
+        },
+        { type: 'separator' },
+        {
+          label: '🔗 Open Original',
+          click: () => {
+            const articleUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
+            shell.openExternal(articleUrl);
+          }
+        },
+        {
+          label: '📚 Open Archive',
+          click: () => {
+            const articleUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
+            const archiveDirectUrl = generateArchiveDirectUrl(articleUrl);
+            shell.openExternal(archiveDirectUrl);
+          }
+        }
+      ]
+    };
+  });
   
   currentMenuTemplate.push(...storyItems);
   
@@ -727,11 +951,77 @@ async function updateMenu() {
   const redditStoryItems = redditStories.map(story => ({
     label: `👽 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
     click: () => {
-      // For Reddit: open comments if self-post, otherwise open the actual link
+      // For Reddit: open FOUR tabs - archive submission, actual content, direct archive, Reddit discussion
       const targetUrl = story.is_self ? story.url : story.actual_url;
+      const archiveSubmissionUrl = generateArchiveSubmissionUrl(targetUrl);
+      const archiveDirectUrl = generateArchiveDirectUrl(targetUrl);
       trackClick(story.id, story.title, targetUrl, story.points, story.comments);
-      shell.openExternal(targetUrl);
-    }
+      
+      // 1. Open archive.ph submission URL (triggers archiving)
+      shell.openExternal(archiveSubmissionUrl);
+      
+      // 2. Open direct archive.ph link
+      setTimeout(() => {
+        shell.openExternal(archiveDirectUrl);
+      }, 200);
+      
+      // 3. Open Reddit discussion page
+      setTimeout(() => {
+        shell.openExternal(story.url); // This is always the Reddit discussion URL
+      }, 400);
+      
+      // 4. Open the actual article content LAST (becomes active tab)
+      setTimeout(() => {
+        shell.openExternal(targetUrl);
+      }, 600);
+    },
+    submenu: [
+      {
+        label: '🏷️ Add Tag',
+        submenu: [
+          {
+            label: '✏️ Custom Tag...',
+            click: () => {
+              promptForCustomTag(story.id, story.title);
+            }
+          },
+          { type: 'separator' },
+          { label: 'Available Tags:', enabled: false },
+          { type: 'separator' },
+          ...availableTags.map(tag => ({
+            label: tag,
+            click: () => addTagToStory(story.id, tag)
+          })),
+          { type: 'separator' },
+          {
+            label: 'reddit',
+            click: () => addTagToStory(story.id, 'reddit')
+          }
+        ]
+      },
+      { type: 'separator' },
+      {
+        label: '🔗 Open Article Only',
+        click: () => {
+          const targetUrl = story.is_self ? story.url : story.actual_url;
+          shell.openExternal(targetUrl);
+        }
+      },
+      {
+        label: '💬 Open Reddit Discussion',
+        click: () => {
+          shell.openExternal(story.url);
+        }
+      },
+      {
+        label: '📚 Open Archive',
+        click: () => {
+          const targetUrl = story.is_self ? story.url : story.actual_url;
+          const archiveDirectUrl = generateArchiveDirectUrl(targetUrl);
+          shell.openExternal(archiveDirectUrl);
+        }
+      }
+    ]
   }));
   
   currentMenuTemplate.push(...redditStoryItems);
@@ -748,9 +1038,62 @@ async function updateMenu() {
   const pinboardStoryItems = pinboardStories.map(story => ({
     label: `📌 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
     click: () => {
+      const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
+      const archiveDirectUrl = generateArchiveDirectUrl(story.url);
       trackClick(story.id, story.title, story.url, story.points, story.comments);
-      shell.openExternal(story.url);
-    }
+      
+      // 1. Open archive.ph submission URL (triggers archiving)
+      shell.openExternal(archiveSubmissionUrl);
+      
+      // 2. Open direct archive.ph link
+      setTimeout(() => {
+        shell.openExternal(archiveDirectUrl);
+      }, 200);
+      
+      // 3. Open the original article LAST (becomes active tab)
+      setTimeout(() => {
+        shell.openExternal(story.url);
+      }, 400);
+    },
+    submenu: [
+      {
+        label: '🏷️ Add Tag',
+        submenu: [
+          {
+            label: '✏️ Custom Tag...',
+            click: () => {
+              promptForCustomTag(story.id, story.title);
+            }
+          },
+          { type: 'separator' },
+          { label: 'Available Tags:', enabled: false },
+          { type: 'separator' },
+          ...availableTags.map(tag => ({
+            label: tag,
+            click: () => addTagToStory(story.id, tag)
+          })),
+          { type: 'separator' },
+          {
+            label: 'pinboard',
+            click: () => addTagToStory(story.id, 'pinboard')
+          }
+        ]
+      },
+      { type: 'separator' },
+      {
+        label: '🔗 Open Original',
+        click: () => {
+          shell.openExternal(story.url);
+        }
+      },
+      {
+        label: '📚 Open Archive',
+        click: () => {
+          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
+          shell.openExternal(archiveDirectUrl);
+        }
+      }
+    ]
   }));
   
   currentMenuTemplate.push(...pinboardStoryItems);
@@ -1416,24 +1759,12 @@ function showArticleLibrary() {
   }
 }
 
-// Check if running in server-only mode
-if (process.env.NODE_ENV === 'server' || process.argv.includes('--server-only')) {
-  console.log('🖥️  Starting in server-only mode...');
-  initDatabase(() => {
-    console.log('Database initialized, starting API server...');
-    initApiServer();
-  });
-} else {
-  // Normal Electron app mode
-  app.whenReady().then(() => {
-    console.log('App ready, initializing components...');
-    initDatabase(() => {
-      console.log('Database initialized, starting API server...');
-      initApiServer();
-    });
-    createTray();
-  });
-}
+// Normal Electron app mode only 
+app.whenReady().then(() => {
+  console.log('App ready, initializing components...');
+  initDatabase();
+  createTray();
+});
 
 // Only add Electron event handlers if not in server mode
 if (process.env.NODE_ENV !== 'server' && !process.argv.includes('--server-only')) {
