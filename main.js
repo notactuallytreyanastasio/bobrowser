@@ -5,6 +5,7 @@ const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
+const https = require('https');
 require('dotenv').config();
 
 if (process.env.NODE_ENV === 'development') {
@@ -20,8 +21,10 @@ let currentMenuTemplate = null;
 let redditToken = null;
 let redditCache = {};
 let apiServer = null;
+let httpsServer = null;
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 const API_PORT = 3002;
+const HTTPS_PORT = 3003;
 
 function generateFakeData() {
   if (!db) return;
@@ -863,6 +866,25 @@ function initApiServer() {
     });
   });
   
+  // Get individual article by ID
+  server.get('/api/articles/:id', (req, res) => {
+    const articleId = parseInt(req.params.id);
+    
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+    
+    db.get('SELECT * FROM articles WHERE id = ?', [articleId], (err, article) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else if (!article) {
+        res.status(404).json({ error: 'Article not found' });
+      } else {
+        res.json(article);
+      }
+    });
+  });
+  
   // Search articles
   server.get('/api/articles/search', (req, res) => {
     const query = req.query.q;
@@ -901,39 +923,66 @@ function initApiServer() {
     res.json({ message: 'Analytics opened' });
   });
   
-  // Start server
+  // Start HTTP server
   try {
-    console.log(`Attempting to start server on port ${API_PORT}...`);
+    console.log(`Attempting to start HTTP server on port ${API_PORT}...`);
     
     apiServer = server.listen(API_PORT, '127.0.0.1', () => {
       console.log(`✅ Reading Tracker API server running on http://127.0.0.1:${API_PORT}`);
-      console.log('Server address:', apiServer.address());
-      
-      // Test the server immediately after startup
-      setTimeout(() => {
-        const http = require('http');
-        const req = http.get(`http://127.0.0.1:${API_PORT}/test`, (res) => {
-          console.log('✅ Self-test successful, server is responding');
-        });
-        req.on('error', (err) => {
-          console.error('❌ Self-test failed:', err.message);
-        });
-      }, 500);
     });
     
     apiServer.on('error', (err) => {
-      console.error('❌ API Server Error:', err);
-      if (err.code === 'EADDRINUSE') {
-        console.log(`Port ${API_PORT} is already in use.`);
-      }
-    });
-    
-    apiServer.on('listening', () => {
-      console.log('✅ Server is listening on port', API_PORT);
+      console.error('❌ HTTP Server Error:', err);
     });
     
   } catch (error) {
-    console.error('❌ Failed to start API server:', error);
+    console.error('❌ Failed to start HTTP server:', error);
+  }
+
+  // Start HTTPS server for mixed content compatibility
+  try {
+    console.log(`Attempting to start HTTPS server on port ${HTTPS_PORT}...`);
+    
+    // Check if certificate files exist
+    const certPath = path.join(__dirname, 'cert.pem');
+    const keyPath = path.join(__dirname, 'key.pem');
+    
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      const httpsOptions = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath)
+      };
+      
+      httpsServer = https.createServer(httpsOptions, server);
+      
+      httpsServer.listen(HTTPS_PORT, '127.0.0.1', () => {
+        console.log(`✅ Reading Tracker HTTPS server running on https://127.0.0.1:${HTTPS_PORT}`);
+        console.log('💡 Use HTTPS endpoint for mixed content compatibility');
+        
+        // Test the HTTPS server
+        setTimeout(() => {
+          const https = require('https');
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // Accept self-signed cert
+          const req = https.get(`https://127.0.0.1:${HTTPS_PORT}/test`, (res) => {
+            console.log('✅ HTTPS self-test successful');
+          });
+          req.on('error', (err) => {
+            console.error('❌ HTTPS self-test failed:', err.message);
+          });
+        }, 500);
+      });
+      
+      httpsServer.on('error', (err) => {
+        console.error('❌ HTTPS Server Error:', err);
+      });
+      
+    } else {
+      console.log('⚠️  SSL certificates not found, HTTPS server not started');
+      console.log('   For mixed content support, run: openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes');
+    }
+    
+  } catch (error) {
+    console.error('❌ Failed to start HTTPS server:', error);
   }
 }
 
@@ -1052,7 +1101,7 @@ function showArticleLibrary() {
             }
             
             container.innerHTML = articles.map(article => \`
-                <div class="article" onclick="openArticle('\${article.url}')">
+                <div class="article" onclick="openArticle(\${article.id})">
                     <div class="article-title">\${escapeHtml(article.title)}</div>
                     <div class="article-meta">
                         \${article.author ? \`By \${escapeHtml(article.author)} • \` : ''}
@@ -1060,6 +1109,12 @@ function showArticleLibrary() {
                         \${article.word_count || 0} words
                     </div>
                     <div class="article-excerpt">\${escapeHtml((article.text_content || '').substring(0, 200))}...</div>
+                    <div class="article-footer" style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
+                        <small style="color: #999;">📚 Saved Content</small>
+                        <a href="\${article.url}" target="_blank" rel="noopener noreferrer"
+                           onclick="event.stopPropagation();" 
+                           style="color: #007aff; text-decoration: none; font-size: 12px;">🔗 Original</a>
+                    </div>
                 </div>
             \`).join('');
         }
@@ -1070,8 +1125,194 @@ function showArticleLibrary() {
             return div.innerHTML;
         }
         
-        function openArticle(url) {
-            require('electron').shell.openExternal(url);
+        function openArticle(articleId) {
+            // Open the saved article content in a new window instead of external URL
+            fetch(\`http://127.0.0.1:3002/api/articles/\${articleId}\`)
+                .then(response => response.json())
+                .then(article => {
+                    if (article) {
+                        showSavedArticle(article);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading article:', error);
+                });
+        }
+        
+        function showSavedArticle(article) {
+            // Since we're in the renderer process, we'll create a new window using window.open
+            // and populate it with our article content
+                
+            // Create a clean article view HTML
+            const articleHTML = \`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>\${escapeHtml(article.title)}</title>
+    <style>
+        body {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #fff;
+        }
+        .article-header {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .article-title {
+            font-size: 28px;
+            font-weight: 700;
+            line-height: 1.3;
+            margin: 0 0 15px 0;
+            color: #1a1a1a;
+        }
+        .article-meta {
+            color: #666;
+            font-size: 14px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .article-content {
+            font-size: 16px;
+            line-height: 1.7;
+        }
+        .article-content h1, .article-content h2, .article-content h3 {
+            margin-top: 30px;
+            margin-bottom: 15px;
+            color: #1a1a1a;
+        }
+        .article-content h1 { font-size: 24px; }
+        .article-content h2 { font-size: 20px; }
+        .article-content h3 { font-size: 18px; }
+        .article-content p {
+            margin-bottom: 16px;
+        }
+        .article-content img {
+            max-width: 100%;
+            height: auto;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .article-content blockquote {
+            border-left: 3px solid #007aff;
+            margin: 20px 0;
+            padding-left: 20px;
+            color: #555;
+            font-style: italic;
+        }
+        .article-content code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: Monaco, monospace;
+            font-size: 14px;
+        }
+        .article-content pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        .original-link {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            text-align: center;
+        }
+        .original-link a {
+            color: #007aff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .original-link a:hover {
+            text-decoration: underline;
+        }
+        .saved-indicator {
+            background: #e8f5e8;
+            color: #2d5a2d;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="saved-indicator">📚 Saved Article • Reading Tracker</div>
+    
+    <div class="article-header">
+        <h1 class="article-title">\${escapeHtml(article.title)}</h1>
+        <div class="article-meta">
+            \${article.author ? \`<span>By \${escapeHtml(article.author)}</span>\` : ''}
+            \${article.publish_date ? \`<span>\${new Date(article.publish_date).toLocaleDateString()}</span>\` : ''}
+            <span>Saved \${new Date(article.saved_at).toLocaleDateString()}</span>
+            <span>\${article.word_count || 0} words</span>
+            \${article.reading_time ? \`<span>\${Math.round(article.reading_time / 1000)}s reading time</span>\` : ''}
+        </div>
+    </div>
+    
+    <div class="article-content">
+        \${article.content}
+    </div>
+    
+    <div class="original-link">
+        <a href="\${article.url}" target="_blank" rel="noopener noreferrer">
+            📎 View Original Source
+        </a>
+    </div>
+    
+    <script>
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Clean up any potentially problematic scripts in the saved content
+        document.querySelectorAll('script').forEach(script => {
+            if (!script.textContent.includes('escapeHtml')) {
+                script.remove();
+            }
+        });
+        
+        // Make all external links open in new tabs
+        document.querySelectorAll('a[href^="http"]').forEach(link => {
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+        });
+        
+        // Add click handler for relative links to open in original domain
+        document.querySelectorAll('a[href^="/"], a[href^="../"], a[href^="./"]').forEach(link => {
+            const originalDomain = new URL('\${article.url}').origin;
+            const absoluteUrl = new URL(link.href, originalDomain).href;
+            link.href = absoluteUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+        });
+    </script>
+</body>
+</html>\`;
+
+            // Create a new window with the article content
+            const newWin = window.open('', '_blank', 'width=800,height=900,scrollbars=yes,resizable=yes');
+            if (newWin) {
+                newWin.document.write(articleHTML);
+                newWin.document.close();
+                newWin.focus();
+            } else {
+                // Fallback: if popup blocked, show in current window
+                document.body.innerHTML = articleHTML;
+            }
         }
         
         document.getElementById('searchBox').addEventListener('input', async (e) => {
