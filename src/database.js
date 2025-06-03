@@ -7,6 +7,19 @@ const sqlite3 = require('sqlite3').verbose();
 let db = null;
 
 /**
+ * Convert string to a consistent integer hash
+ */
+function hashStringToInt(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
+/**
  * Initialize SQLite database with required tables and schema
  * @param {Function} callback - Callback function to execute after initialization
  */
@@ -33,7 +46,7 @@ function initDatabase(callback) {
       first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Create articles table for saved content from Safari extension
+    // Create articles table for saved content
     db.run(`CREATE TABLE IF NOT EXISTS articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       url TEXT NOT NULL UNIQUE,
@@ -121,9 +134,18 @@ function trackStoryAppearance(story) {
   if (db) {
     const archiveUrl = generateArchiveSubmissionUrl(story.url);
     
+    // Convert story ID to integer - use hash for string IDs
+    let storyId;
+    if (typeof story.id === 'number') {
+      storyId = story.id;
+    } else {
+      // For string IDs (like Reddit or Pinboard), create a hash
+      storyId = hashStringToInt(story.id);
+    }
+    
     // Try to insert new story, ignore if URL already exists due to unique constraint
     db.run('INSERT OR IGNORE INTO stories (story_id, title, url, archive_url, points, comments, impression_count) VALUES (?, ?, ?, ?, ?, ?, 1)', 
-      [story.id, story.title, story.url, archiveUrl, story.points, story.comments], function(err) {
+      [storyId, story.title, story.url, archiveUrl, story.points, story.comments], function(err) {
         if (err) {
           console.error('Error inserting story:', err);
         } else if (this.changes === 0) {
@@ -144,12 +166,20 @@ function trackStoryAppearance(story) {
  */
 function trackClick(storyId, title, url, points, comments) {
   if (db) {
+    // Convert story ID to integer - use hash for string IDs
+    let normalizedStoryId;
+    if (typeof storyId === 'number') {
+      normalizedStoryId = storyId;
+    } else {
+      normalizedStoryId = hashStringToInt(storyId);
+    }
+    
     const archiveUrl = generateArchiveSubmissionUrl(url);
-    db.get('SELECT first_seen_at FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+    db.get('SELECT first_seen_at FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
       const storyAddedAt = row ? row.first_seen_at : new Date().toISOString();
       
       db.run('INSERT INTO clicks (story_id, title, url, archive_url, points, comments, story_added_at) VALUES (?, ?, ?, ?, ?, ?, ?)', 
-        [storyId, title, url, archiveUrl, points, comments, storyAddedAt], function(err) {
+        [normalizedStoryId, title, url, archiveUrl, points, comments, storyAddedAt], function(err) {
         if (err) {
           console.error('Error tracking click:', err);
         }
@@ -162,8 +192,16 @@ function addTagToStory(storyId, tag) {
   if (db && tag && tag.trim()) {
     const cleanTag = tag.trim().toLowerCase();
     
+    // Convert story ID to integer - use hash for string IDs
+    let normalizedStoryId;
+    if (typeof storyId === 'number') {
+      normalizedStoryId = storyId;
+    } else {
+      normalizedStoryId = hashStringToInt(storyId);
+    }
+    
     // Get current tags for the story
-    db.get('SELECT tags FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+    db.get('SELECT tags FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
       if (!err) {
         let currentTags = [];
         if (row && row.tags) {
@@ -175,7 +213,7 @@ function addTagToStory(storyId, tag) {
           currentTags.push(cleanTag);
           const updatedTags = currentTags.join(',');
           
-          db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [updatedTags, storyId], (err) => {
+          db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [updatedTags, normalizedStoryId], (err) => {
             if (err) {
               console.error('Error adding tag:', err);
             }
@@ -188,7 +226,15 @@ function addTagToStory(storyId, tag) {
 
 function getStoryTags(storyId, callback) {
   if (db) {
-    db.get('SELECT tags FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+    // Convert story ID to integer - use hash for string IDs
+    let normalizedStoryId;
+    if (typeof storyId === 'number') {
+      normalizedStoryId = storyId;
+    } else {
+      normalizedStoryId = hashStringToInt(storyId);
+    }
+    
+    db.get('SELECT tags FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
       if (err) {
         callback(err, []);
       } else {
@@ -203,13 +249,21 @@ function getStoryTags(storyId, callback) {
 
 function removeTagFromStory(storyId, tagToRemove) {
   if (db && tagToRemove) {
-    db.get('SELECT tags FROM stories WHERE story_id = ?', [storyId], (err, row) => {
+    // Convert story ID to integer - use hash for string IDs
+    let normalizedStoryId;
+    if (typeof storyId === 'number') {
+      normalizedStoryId = storyId;
+    } else {
+      normalizedStoryId = hashStringToInt(storyId);
+    }
+    
+    db.get('SELECT tags FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
       if (!err && row && row.tags) {
         const currentTags = row.tags.split(',').map(t => t.trim()).filter(t => t);
         const updatedTags = currentTags.filter(tag => tag !== tagToRemove.trim().toLowerCase());
         const newTagsString = updatedTags.join(',');
         
-        db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [newTagsString, storyId], (err) => {
+        db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [newTagsString, normalizedStoryId], (err) => {
           if (err) {
             console.error('Error removing tag:', err);
           }

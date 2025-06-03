@@ -1,5 +1,5 @@
 /**
- * Express API server for Safari extension communication
+ * Express API server for external integrations
  */
 
 const express = require('express');
@@ -14,7 +14,7 @@ let apiServer = null;
 let httpsServer = null;
 
 /**
- * Initialize Express API server for Safari extension communication
+ * Initialize Express API server for external integrations
  */
 function initApiServer() {
   

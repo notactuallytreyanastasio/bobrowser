@@ -5,7 +5,7 @@
  * - Aggregates stories from Hacker News, Reddit, and Pinboard
  * - Tracks reading patterns and story impressions
  * - Provides system tray menu for quick access
- * - API server for Safari extension integration
+ * - API server for external integrations
  * - Article archiving and offline reading (disabled pending implementation)
  * 
  * @author Reading Tracker
@@ -34,7 +34,7 @@ if (process.env.NODE_ENV === 'development') {
 app.whenReady().then(() => {
   initDatabase(() => {
     createTray();
-    // Initialize API server for Safari extension
+    // Initialize API server
     if (process.env.ENABLE_API_SERVER !== 'false') {
       initApiServer();
     }

@@ -8,7 +8,7 @@ A macOS menu bar application that aggregates stories from Hacker News, Reddit, a
 - 📊 **Reading Analytics** - Track clicks, story impressions, and reading patterns  
 - 🔖 **Story Tagging** - Organize stories with custom tags
 - 💾 **Offline Storage** - Save articles for offline reading
-- 🌐 **Safari Extension Support** - HTTP/HTTPS API server for browser integration
+- 🌐 **API Server** - HTTP/HTTPS endpoints for external integrations
 - 🎯 **Menu Bar Access** - Quick access via macOS system tray
 
 ## Quick Start
@@ -53,7 +53,7 @@ Or use the setup dialog that appears when first starting without credentials.
 
 ### API Server (Optional)
 
-The app includes HTTP/HTTPS servers for Safari extension integration:
+The app includes HTTP/HTTPS servers for external integrations:
 
 ```bash
 # Generate SSL certificates for HTTPS support
@@ -103,7 +103,7 @@ node open-latest-article.js
 
 - **Electron** - Desktop application framework
 - **SQLite** - Local data storage with FTS5 search
-- **Express** - API server for browser integration
+- **Express** - API server for external integrations
 - **Modular design** - Separated concerns across modules
 
 ### Database Schema
@@ -166,7 +166,7 @@ mac_hn/
 │   ├── menu.js          # Tray menu management  
 │   └── ui.js            # User interface components
 ├── package.json
-└── Extension/           # Safari extension files
+└── archives/            # Archived articles
 ```
 
 ### Adding Features
