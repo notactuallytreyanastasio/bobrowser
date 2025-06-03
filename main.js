@@ -264,12 +264,10 @@ async function archivePageWithMonolith(url, title) {
       'monolith',
       url,
       '--output', filePath,
-      '--silent',           // Suppress progress output
-      '--isolate',          // Remove all remote requests
-      '--no-css',           // Don't inline CSS (keep original styling)
-      '--no-frames',        // Remove iframes
+      '--quiet',            // Suppress verbosity
+      '--isolate',          // Cut off document from the Internet
+      '--no-frames',        // Remove frames and iframes
       '--no-js',            // Remove JavaScript
-      '--no-images',        // Remove images (makes files smaller)
       '--user-agent', '"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"'
     ].join(' ');
     
@@ -1319,7 +1317,7 @@ function showArticleLibrary() {
             function openArchivedArticle(archivePath, originalUrl) {
               if (archivePath) {
                 const { shell } = require('electron');
-                const archiveUrl = \`https://127.0.0.1:3003/archives/\${archivePath}\`;
+                const archiveUrl = \`http://127.0.0.1:3002/archives/\${archivePath}\`;
                 shell.openExternal(archiveUrl);
               } else {
                 openOriginalArticle(originalUrl);
@@ -1362,7 +1360,8 @@ function showArticleLibrary() {
               statusDiv.innerHTML = '<span style="color: #007bff;">🗃️ Archiving... This may take a few seconds</span>';
               
               try {
-                const response = await fetch('https://127.0.0.1:3003/api/articles', {
+                // Use the HTTP endpoint instead of HTTPS from within Electron
+                const response = await fetch('http://127.0.0.1:3002/api/articles', {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
