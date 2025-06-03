@@ -6,6 +6,8 @@ const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
+const puppeteer = require('puppeteer');
+const crypto = require('crypto');
 require('dotenv').config();
 
 if (process.env.NODE_ENV === 'development') {
@@ -123,83 +125,272 @@ function generateFakeData() {
   }, 1000);
 }
 
-function initDatabase() {
+function initDatabase(callback) {
   db = new sqlite3.Database('clicks.db');
   
-  db.run(`CREATE TABLE IF NOT EXISTS clicks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    story_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    url TEXT NOT NULL,
-    points INTEGER,
-    comments INTEGER,
-    story_added_at DATETIME,
-    clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  
-  db.run(`CREATE TABLE IF NOT EXISTS stories (
-    story_id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
-    points INTEGER,
-    comments INTEGER,
-    first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  
-  // Create articles table for saved content from Safari extension
-  db.run(`CREATE TABLE IF NOT EXISTS articles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL,
-    author TEXT,
-    publish_date TEXT,
-    content TEXT NOT NULL,
-    text_content TEXT NOT NULL,
-    word_count INTEGER,
-    reading_time INTEGER,
-    saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    tags TEXT,
-    notes TEXT
-  )`);
-  
-  // Create full-text search table for articles
-  db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
-    title,
-    author,
-    text_content,
-    tags,
-    content='articles',
-    content_rowid='id'
-  )`);
-  
-  // Triggers to keep FTS table in sync
-  db.run(`CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
-    INSERT INTO articles_fts(rowid, title, author, text_content, tags) 
-    VALUES (new.id, new.title, new.author, new.text_content, new.tags);
-  END`);
-  
-  db.run(`CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
-    INSERT INTO articles_fts(articles_fts, rowid, title, author, text_content, tags) 
-    VALUES ('delete', old.id, old.title, old.author, old.text_content, old.tags);
-  END`);
-  
-  db.run(`CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
-    INSERT INTO articles_fts(articles_fts, rowid, title, author, text_content, tags) 
-    VALUES ('delete', old.id, old.title, old.author, old.text_content, old.tags);
-    INSERT INTO articles_fts(rowid, title, author, text_content, tags) 
-    VALUES (new.id, new.title, new.author, new.text_content, new.tags);
-  END`);
-  
-  db.run(`ALTER TABLE clicks ADD COLUMN points INTEGER`, () => {});
-  db.run(`ALTER TABLE clicks ADD COLUMN comments INTEGER`, () => {});
-  db.run(`ALTER TABLE clicks ADD COLUMN story_added_at DATETIME`, () => {});
-  
-  // Check if we need to generate fake data
-  db.get('SELECT COUNT(*) as count FROM clicks', (err, row) => {
-    if (!err && row.count < 100) {
-      console.log('Database appears empty, generating fake data...');
-      generateFakeData();
-    }
+  db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS clicks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      story_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      points INTEGER,
+      comments INTEGER,
+      story_added_at DATETIME,
+      clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    db.run(`CREATE TABLE IF NOT EXISTS stories (
+      story_id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      points INTEGER,
+      comments INTEGER,
+      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    // Create articles table for saved content from Safari extension
+    db.run(`CREATE TABLE IF NOT EXISTS articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      author TEXT,
+      publish_date TEXT,
+      content TEXT,
+      text_content TEXT,
+      word_count INTEGER,
+      reading_time INTEGER,
+      saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      tags TEXT,
+      notes TEXT,
+      archive_path TEXT,
+      archive_date DATETIME,
+      file_size INTEGER,
+      description TEXT
+    )`);
+    
+    // Create full-text search table for articles
+    db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+      title,
+      author,
+      text_content,
+      tags,
+      content='articles',
+      content_rowid='id'
+    )`);
+    
+    // Triggers to keep FTS table in sync
+    db.run(`CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
+      INSERT INTO articles_fts(rowid, title, author, text_content, tags) 
+      VALUES (new.id, new.title, new.author, new.text_content, new.tags);
+    END`);
+    
+    db.run(`CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
+      INSERT INTO articles_fts(articles_fts, rowid, title, author, text_content, tags) 
+      VALUES ('delete', old.id, old.title, old.author, old.text_content, old.tags);
+    END`);
+    
+    db.run(`CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
+      INSERT INTO articles_fts(articles_fts, rowid, title, author, text_content, tags) 
+      VALUES ('delete', old.id, old.title, old.author, old.text_content, old.tags);
+      INSERT INTO articles_fts(rowid, title, author, text_content, tags) 
+      VALUES (new.id, new.title, new.author, new.text_content, new.tags);
+    END`);
+    
+    db.run(`ALTER TABLE clicks ADD COLUMN points INTEGER`, () => {});
+    db.run(`ALTER TABLE clicks ADD COLUMN comments INTEGER`, () => {});
+    db.run(`ALTER TABLE clicks ADD COLUMN story_added_at DATETIME`, () => {});
+    
+    // Add new columns for archiving
+    db.run(`ALTER TABLE articles ADD COLUMN archive_path TEXT`, () => {});
+    db.run(`ALTER TABLE articles ADD COLUMN archive_date DATETIME`, () => {});
+    db.run(`ALTER TABLE articles ADD COLUMN file_size INTEGER`, () => {});
+    db.run(`ALTER TABLE articles ADD COLUMN description TEXT`, () => {});
+    
+    // Check if we need to generate fake data
+    db.get('SELECT COUNT(*) as count FROM clicks', (err, row) => {
+      if (!err && row.count < 100) {
+        console.log('Database appears empty, generating fake data...');
+        generateFakeData();
+      }
+      if (callback) callback();
+    });
   });
+}
+
+// Create archives directory if it doesn't exist
+const archivesDir = path.join(__dirname, 'archives');
+if (!fs.existsSync(archivesDir)) {
+  fs.mkdirSync(archivesDir, { recursive: true });
+}
+
+async function archivePageWithPuppeteer(url, title) {
+  let browser;
+  try {
+    console.log(`Starting archive process for: ${url}`);
+    
+    // Generate unique filename based on URL hash
+    const urlHash = crypto.createHash('md5').update(url).digest('hex');
+    const safeTitle = title.replace(/[^a-zA-Z0-9\s-]/g, '').substring(0, 50);
+    const fileName = `${safeTitle}_${urlHash}.html`;
+    const filePath = path.join(archivesDir, fileName);
+    
+    // Launch browser
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor'
+      ]
+    });
+    
+    const page = await browser.newPage();
+    
+    // Set a realistic user agent
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    
+    // Set viewport
+    await page.setViewport({ width: 1200, height: 800 });
+    
+    console.log(`Navigating to: ${url}`);
+    
+    // Navigate with longer timeout and wait for network idle
+    await page.goto(url, { 
+      waitUntil: 'networkidle2', 
+      timeout: 30000 
+    });
+    
+    // Wait a bit more for any lazy-loaded content
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Remove ads, popups, and other unwanted elements
+    await page.evaluate(() => {
+      const selectorsToRemove = [
+        '[class*="ad"]', '[id*="ad"]',
+        '[class*="popup"]', '[class*="modal"]',
+        '[class*="overlay"]', '[class*="banner"]',
+        '[class*="cookie"]', '[class*="newsletter"]',
+        '[class*="subscription"]', '[class*="paywall"]',
+        '.advertisement', '.ads', '.ad-container',
+        'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]'
+      ];
+      
+      selectorsToRemove.forEach(selector => {
+        document.querySelectorAll(selector).forEach(el => el.remove());
+      });
+    });
+    
+    // Get the full page content
+    const content = await page.content();
+    
+    // Get page metadata
+    const pageInfo = await page.evaluate(() => {
+      const getMetaContent = (name) => {
+        const meta = document.querySelector(`meta[name="${name}"], meta[property="${name}"], meta[property="og:${name}"]`);
+        return meta ? meta.getAttribute('content') : '';
+      };
+      
+      return {
+        title: document.title,
+        description: getMetaContent('description'),
+        author: getMetaContent('author'),
+        publishDate: getMetaContent('article:published_time') || getMetaContent('date'),
+        siteName: getMetaContent('site_name') || getMetaContent('og:site_name')
+      };
+    });
+    
+    // Create a self-contained HTML file
+    const archivedContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>📚 ${pageInfo.title || title}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        .archive-header {
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+            padding: 20px;
+            margin-bottom: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        }
+        .archive-header h1 {
+            margin: 0 0 10px 0;
+            color: #495057;
+            font-size: 18px;
+        }
+        .archive-info {
+            font-size: 14px;
+            color: #6c757d;
+        }
+        .archive-info a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .archive-info a:hover {
+            text-decoration: underline;
+        }
+        .archive-content {
+            max-width: none !important;
+        }
+        /* Hide any remaining ads or popups */
+        [class*="ad"], [id*="ad"],
+        [class*="popup"], [class*="modal"],
+        [class*="overlay"], [class*="banner"],
+        [class*="cookie"], [class*="newsletter"] {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="archive-header">
+        <h1>📚 Archived Page</h1>
+        <div class="archive-info">
+            <strong>Original URL:</strong> <a href="${url}" target="_blank">${url}</a><br>
+            <strong>Archived:</strong> ${new Date().toLocaleString()}<br>
+            ${pageInfo.author ? `<strong>Author:</strong> ${pageInfo.author}<br>` : ''}
+            ${pageInfo.publishDate ? `<strong>Published:</strong> ${pageInfo.publishDate}<br>` : ''}
+        </div>
+    </div>
+    <div class="archive-content">
+        ${content.replace(/<head>[\s\S]*?<\/head>/i, '').replace(/<\/body>[\s\S]*$/i, '')}
+    </div>
+</body>
+</html>`;
+    
+    // Save the archived content
+    fs.writeFileSync(filePath, archivedContent, 'utf8');
+    
+    console.log(`Page archived successfully: ${filePath}`);
+    
+    return {
+      success: true,
+      filePath,
+      fileName,
+      title: pageInfo.title || title,
+      author: pageInfo.author,
+      description: pageInfo.description,
+      publishDate: pageInfo.publishDate,
+      archiveDate: new Date().toISOString(),
+      originalUrl: url,
+      fileSize: Buffer.byteLength(archivedContent, 'utf8')
+    };
+    
+  } catch (error) {
+    console.error(`Error archiving page ${url}:`, error);
+    return {
+      success: false,
+      error: error.message,
+      originalUrl: url
+    };
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
 }
 
 function trackStoryAppearance(story) {
@@ -631,6 +822,13 @@ async function updateMenu() {
   currentMenuTemplate.push(
     { type: 'separator' },
     {
+      label: '📚 Saved Articles',
+      click: () => {
+        showArticleLibrary();
+      }
+    },
+    { type: 'separator' },
+    {
       label: 'Quit',
       click: () => {
         app.quit();
@@ -726,6 +924,15 @@ function initApiServer() {
   
   server.use(express.json({ limit: '10mb' }));
   
+  // Serve archived files
+  server.use('/archives', express.static(archivesDir));
+  
+  // Add request logging
+  server.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+  });
+  
   // Simple test endpoint first
   server.get('/test', (req, res) => {
     console.log('Test endpoint hit');
@@ -744,18 +951,63 @@ function initApiServer() {
     res.status(500).json({ error: err.message });
   });
   
-  // Save article from Safari extension
-  server.post('/api/articles', (req, res) => {
-    console.log('API: Saving article from Safari extension');
+  // Save article from Safari extension with Puppeteer archiving
+  server.post('/api/articles', async (req, res) => {
+    console.log('API: Archiving article with Puppeteer');
     
-    saveArticle(req.body, (err, result) => {
-      if (err) {
-        console.error('API: Error saving article:', err);
-        res.status(500).json({ error: err.message });
-      } else {
-        res.json(result);
+    try {
+      const { url, title } = req.body;
+      
+      if (!url) {
+        return res.status(400).json({ error: 'URL is required' });
       }
-    });
+      
+      // Archive the page with Puppeteer
+      const archiveResult = await archivePageWithPuppeteer(url, title || 'Untitled');
+      
+      if (!archiveResult.success) {
+        return res.status(500).json({ error: archiveResult.error });
+      }
+      
+      // Save to database
+      const articleData = {
+        url: archiveResult.originalUrl,
+        title: archiveResult.title,
+        author: archiveResult.author,
+        publish_date: archiveResult.publishDate,
+        description: archiveResult.description,
+        archive_path: archiveResult.fileName,
+        archive_date: archiveResult.archiveDate,
+        file_size: archiveResult.fileSize,
+        saved_at: new Date().toISOString()
+      };
+      
+      db.run(`INSERT OR REPLACE INTO articles 
+        (url, title, author, publish_date, description, archive_path, archive_date, file_size, saved_at, content, text_content) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [articleData.url, articleData.title, articleData.author, articleData.publish_date, 
+         articleData.description, articleData.archive_path, articleData.archive_date, 
+         articleData.file_size, articleData.saved_at, '', ''],
+        function(err) {
+          if (err) {
+            console.error('API: Error saving article to database:', err);
+            res.status(500).json({ error: err.message });
+          } else {
+            console.log(`Article archived successfully: ${articleData.title}`);
+            res.json({
+              success: true,
+              id: this.lastID,
+              ...articleData,
+              message: 'Article archived successfully for offline reading'
+            });
+          }
+        }
+      );
+      
+    } catch (error) {
+      console.error('API: Error archiving article:', error);
+      res.status(500).json({ error: error.message });
+    }
   });
   
   // Get articles
@@ -885,25 +1137,276 @@ function initApiServer() {
   }
 }
 
-// showArticleLibrary function removed - will be revisited fresh
+// Article Library Viewer Window
+function showArticleLibrary() {
+  try {
+    console.log('Opening article library...');
+    
+    const win = new BrowserWindow({
+      width: 900,
+      height: 700,
+      title: '📚 Saved Articles',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+
+    // Helper function for escaping HTML
+    function escapeHtml(text) {
+      if (!text) return '';
+      return text.replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+    }
+    
+    function formatDate(dateStr) {
+      if (!dateStr) return 'Unknown';
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    }
+
+    // Get articles from database
+    getArticles(50, 0, (err, articles) => {
+      if (err) {
+        console.error('Error fetching articles:', err);
+        articles = [];
+      }
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>📚 Saved Articles</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+              margin: 0;
+              padding: 20px;
+              background-color: #f5f5f5;
+              line-height: 1.6;
+            }
+            .header {
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: white;
+              padding: 20px;
+              border-radius: 12px;
+              margin-bottom: 20px;
+              text-align: center;
+            }
+            .header h1 {
+              margin: 0;
+              font-size: 28px;
+              font-weight: 300;
+            }
+            .stats {
+              font-size: 14px;
+              opacity: 0.9;
+              margin-top: 8px;
+            }
+            .article-list {
+              background: white;
+              border-radius: 12px;
+              box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              overflow: hidden;
+            }
+            .article-item {
+              padding: 16px 20px;
+              border-bottom: 1px solid #e0e0e0;
+              cursor: pointer;
+              transition: background-color 0.2s;
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+            }
+            .article-item:hover {
+              background-color: #f8f9fa;
+            }
+            .article-item:last-child {
+              border-bottom: none;
+            }
+            .article-main {
+              flex: 1;
+            }
+            .article-title {
+              font-size: 16px;
+              font-weight: 500;
+              color: #2c3e50;
+              margin-bottom: 4px;
+              line-height: 1.4;
+            }
+            .article-meta {
+              font-size: 12px;
+              color: #7f8c8d;
+              display: flex;
+              gap: 12px;
+              flex-wrap: wrap;
+            }
+            .article-actions {
+              display: flex;
+              gap: 8px;
+              margin-left: 16px;
+            }
+            .btn {
+              padding: 6px 12px;
+              border: none;
+              border-radius: 6px;
+              font-size: 12px;
+              cursor: pointer;
+              transition: background-color 0.2s;
+            }
+            .btn-primary {
+              background-color: #3498db;
+              color: white;
+            }
+            .btn-primary:hover {
+              background-color: #2980b9;
+            }
+            .btn-success {
+              background-color: #28a745;
+              color: white;
+            }
+            .btn-success:hover {
+              background-color: #218838;
+            }
+            .btn-outline {
+              background-color: white;
+              color: #6c757d;
+              border: 1px solid #6c757d;
+            }
+            .btn-outline:hover {
+              background-color: #6c757d;
+              color: white;
+            }
+            .empty-state {
+              text-align: center;
+              padding: 60px 20px;
+              color: #7f8c8d;
+            }
+            .empty-state h2 {
+              font-size: 24px;
+              margin-bottom: 8px;
+              font-weight: 300;
+            }
+            .tag {
+              background-color: #e8f4f8;
+              color: #2980b9;
+              padding: 2px 6px;
+              border-radius: 3px;
+              font-size: 10px;
+              font-weight: 500;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>📚 Saved Articles</h1>
+            <div class="stats">${articles.length} articles saved</div>
+          </div>
+          
+          <div class="article-list">
+            ${articles.length === 0 ? `
+              <div class="empty-state">
+                <h2>No articles saved yet</h2>
+                <p>Use the bookmarklet to save articles from any webpage</p>
+              </div>
+            ` : articles.map(article => `
+              <div class="article-item" onclick="openArchivedArticle('${article.archive_path || ''}', '${article.url}')">
+                <div class="article-main">
+                  <div class="article-title">
+                    📚 ${escapeHtml(article.title)}
+                    ${article.archive_path ? '<span style="color: #28a745; font-size: 0.8em; margin-left: 8px;">● Archived</span>' : '<span style="color: #ffc107; font-size: 0.8em; margin-left: 8px;">○ Not Archived</span>'}
+                  </div>
+                  <div class="article-meta">
+                    ${article.file_size ? `<span>💾 ${Math.round(article.file_size / 1024)} KB</span>` : ''}
+                    <span>📅 ${formatDate(article.saved_at)}</span>
+                    ${article.author ? `<span>✍️ ${escapeHtml(article.author)}</span>` : ''}
+                    ${article.description ? `<span>📝 ${escapeHtml(article.description.substring(0, 100))}${article.description.length > 100 ? '...' : ''}</span>` : ''}
+                  </div>
+                </div>
+                <div class="article-actions">
+                  ${article.archive_path ? 
+                    `<button class="btn btn-success" onclick="event.stopPropagation(); openArchivedArticle('${article.archive_path}', '${article.url}')">
+                      📚 Read Offline
+                    </button>
+                    <button class="btn btn-outline" onclick="event.stopPropagation(); openOriginalArticle('${article.url}')">
+                      🌐 Original
+                    </button>` :
+                    `<button class="btn btn-primary" onclick="event.stopPropagation(); openOriginalArticle('${article.url}')">
+                      🌐 Open Original
+                    </button>`
+                  }
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <script>
+            function openArchivedArticle(archivePath, originalUrl) {
+              if (archivePath) {
+                const { shell } = require('electron');
+                const archiveUrl = \`https://127.0.0.1:3003/archives/\${archivePath}\`;
+                shell.openExternal(archiveUrl);
+              } else {
+                openOriginalArticle(originalUrl);
+              }
+            }
+            
+            function openOriginalArticle(url) {
+              const { shell } = require('electron');
+              shell.openExternal(url);
+            }
+            
+            function escapeHtml(text) {
+              if (!text) return '';
+              const div = document.createElement('div');
+              div.textContent = text;
+              return div.innerHTML;
+            }
+            
+            function formatDate(dateStr) {
+              if (!dateStr) return 'Unknown';
+              const date = new Date(dateStr);
+              return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            }
+          </script>
+        </body>
+        </html>
+      `;
+
+      win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
+    });
+
+    win.on('closed', () => {
+      console.log('Article library window closed');
+    });
+
+  } catch (error) {
+    console.error('Error opening article library:', error);
+  }
+}
 
 // Check if running in server-only mode
 if (process.env.NODE_ENV === 'server' || process.argv.includes('--server-only')) {
   console.log('🖥️  Starting in server-only mode...');
-  initDatabase();
-  setTimeout(() => {
-    console.log('Starting API server after database init...');
+  initDatabase(() => {
+    console.log('Database initialized, starting API server...');
     initApiServer();
-  }, 1000);
+  });
 } else {
   // Normal Electron app mode
   app.whenReady().then(() => {
     console.log('App ready, initializing components...');
-    initDatabase();
-    setTimeout(() => {
-      console.log('Starting API server after database init...');
+    initDatabase(() => {
+      console.log('Database initialized, starting API server...');
       initApiServer();
-    }, 1000);
+    });
     createTray();
   });
 }

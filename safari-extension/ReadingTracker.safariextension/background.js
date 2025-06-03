@@ -3,7 +3,7 @@
 
 class ReadingTrackerBackground {
   constructor() {
-    this.electronAppUrl = 'http://localhost:3001'; // We'll add an API server to the Electron app
+    this.electronAppUrl = 'https://127.0.0.1:3003'; // Updated to use HTTPS endpoint
     this.init();
   }
 
@@ -100,17 +100,25 @@ class ReadingTrackerBackground {
   }
 
   async sendToElectronApp(articleData) {
-    // Send article data to the Electron app's API endpoint
+    // Send article data to the Electron app's API endpoint for Puppeteer archiving
+    const archiveRequest = {
+      url: articleData.url,
+      title: articleData.title
+    };
+    
     const response = await fetch(`${this.electronAppUrl}/api/articles`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(articleData)
+      body: JSON.stringify(archiveRequest),
+      // Add this for self-signed certificates
+      mode: 'cors'
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
     return response.json();
