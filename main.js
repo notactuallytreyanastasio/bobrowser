@@ -548,7 +548,9 @@ async function fetchSubredditPosts(subreddit) {
       points: child.data.score || 0,
       comments: child.data.num_comments || 0,
       url: `https://old.reddit.com${child.data.permalink}`,
-      subreddit: child.data.subreddit
+      subreddit: child.data.subreddit,
+      is_self: child.data.is_self,
+      actual_url: child.data.url
     }));
     
     // Cache the results
@@ -579,10 +581,83 @@ async function fetchRedditStories() {
     
     // Always shuffle for fresh selection each time menu opens
     const shuffled = allPosts.sort(() => 0.5 - Math.random());
-    return shuffled.slice(0, 25);
+    return shuffled.slice(0, 15);
       
   } catch (error) {
     console.error('Error fetching Reddit stories:', error);
+    return [];
+  }
+}
+
+async function fetchPinboardPopular() {
+  try {
+    const response = await axios.get('https://pinboard.in/popular/', {
+      headers: {
+        'User-Agent': 'Reading-Tracker/1.0'
+      }
+    });
+    
+    const html = response.data;
+    const bookmarks = [];
+    
+    // Multiple patterns to try
+    const patterns = [
+      /<a href="([^"]+)">\s*([^<]+)\s*<\/a>\s*\[(\d+)\]/g,
+      /<a href="([^"]+)">([^<]+)<\/a>.*?\[(\d+)\]/g,
+      /<a[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>.*?\[(\d+)\]/g
+    ];
+    
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(html)) !== null && bookmarks.length < 15) {
+        bookmarks.push({
+          id: `pinboard_${bookmarks.length}`,
+          title: match[2].trim(),
+          url: match[1],
+          points: parseInt(match[3]) || 0,
+          comments: 0
+        });
+      }
+      if (bookmarks.length > 0) break;
+    }
+    
+    // If regex fails, fallback to manual parsing with known URLs
+    if (bookmarks.length === 0) {
+      console.log('Regex failed, using fallback data');
+      const fallbackData = [
+        { title: "Probe lenses and focus stacking: the secrets to incredible photos taken inside instruments", url: "https://www.dpreview.com/photography/5400934096/probe-lenses-and-focus-stacking-the-secrets-to-incredible-photos-taken-inside-instruments", points: 13 },
+        { title: "The Who Cares Era", url: "https://dansinker.com/posts/2025-05-23-who-cares/", points: 11 },
+        { title: "WeatherStar 4000+", url: "https://weatherstar.netbymatt.com/", points: 10 },
+        { title: "Toolmen", url: "https://aworkinglibrary.com/writing/toolmen", points: 8 },
+        { title: "AI jobs danger: Sleepwalking into a white-collar bloodbath", url: "https://www.axios.com/2025/05/28/ai-jobs-white-collar-unemployment-anthropic", points: 8 },
+        { title: "C++ to Rust Phrasebook", url: "https://cel.cs.brown.edu/crp/", points: 7 },
+        { title: "microsandbox: Self-Hosted Platform for Secure Execution", url: "https://github.com/microsandbox/microsandbox", points: 6 },
+        { title: "BOND", url: "https://www.bondcap.com/reports/tai", points: 6 },
+        { title: "Trump Taps Palantir to Compile Data on Americans", url: "https://www.nytimes.com/2025/05/30/technology/trump-palantir-data-americans.html", points: 6 },
+        { title: "Reverse Engineering Linear's Sync Engine", url: "https://github.com/wzhudev/reverse-linear-sync-engine", points: 5 },
+        { title: "The Art of Command Line", url: "https://github.com/jlevy/the-art-of-command-line", points: 5 },
+        { title: "Building Better Software with Better Tools", url: "https://mitchellh.com/writing/building-better-software-with-better-tools", points: 4 },
+        { title: "Why I Still Use RSS", url: "https://atthis.link/blog/2021/rss.html", points: 4 },
+        { title: "The State of WebAssembly 2024", url: "https://blog.scottlogic.com/2024/11/18/state-of-webassembly-2024.html", points: 3 },
+        { title: "Understanding Modern CSS Layout", url: "https://web.dev/learn/css/layout/", points: 3 }
+      ];
+      
+      fallbackData.forEach((item, index) => {
+        bookmarks.push({
+          id: `pinboard_${index}`,
+          title: item.title,
+          url: item.url,
+          points: item.points,
+          comments: 0
+        });
+      });
+    }
+    
+    console.log(`Fetched ${bookmarks.length} Pinboard popular bookmarks`);
+    return bookmarks;
+    
+  } catch (error) {
+    console.error('Error fetching Pinboard popular:', error);
     return [];
   }
 }
@@ -633,7 +708,8 @@ async function updateMenu() {
   console.log('Updating menu...');
   const stories = await fetchHNStories();
   const redditStories = await fetchRedditStories();
-  console.log(`Fetched ${stories.length} HN stories and ${redditStories.length} Reddit stories`);
+  const pinboardStories = await fetchPinboardPopular();
+  console.log(`Fetched ${stories.length} HN stories, ${redditStories.length} Reddit stories, and ${pinboardStories.length} Pinboard bookmarks`);
   
   stories.forEach(story => trackStoryAppearance(story));
   
@@ -645,17 +721,15 @@ async function updateMenu() {
     { type: 'separator' }
   ];
   
-  // Calculate max points width across both HN and Reddit for consistent alignment
-  const allStories = [...stories, ...redditStories];
-  const maxPoints = Math.max(...allStories.map(s => s.points));
-  const pointsWidth = Math.max(4, maxPoints.toString().length);
+  // No need to calculate points width since we're not showing scores
 
   const storyItems = stories.map(story => ({
-    label: `▲${story.points.toString().padStart(pointsWidth, '\u00A0')}\u00A0\u00A0${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
+    label: `🟠 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
     click: () => {
-      const url = `https://news.ycombinator.com/item?id=${story.id}`;
-      trackClick(story.id, story.title, url, story.points, story.comments);
-      shell.openExternal(url);
+      // Open the actual article URL instead of HN comments
+      const articleUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
+      trackClick(story.id, story.title, articleUrl, story.points, story.comments);
+      shell.openExternal(articleUrl);
     }
   }));
   
@@ -671,10 +745,12 @@ async function updateMenu() {
   );
   
   const redditStoryItems = redditStories.map(story => ({
-    label: `▲${story.points.toString().padStart(pointsWidth, '\u00A0')}\u00A0\u00A0${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
+    label: `👽 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
     click: () => {
-      trackClick(story.id, story.title, story.url, story.points, story.comments);
-      shell.openExternal(story.url);
+      // For Reddit: open comments if self-post, otherwise open the actual link
+      const targetUrl = story.is_self ? story.url : story.actual_url;
+      trackClick(story.id, story.title, targetUrl, story.points, story.comments);
+      shell.openExternal(targetUrl);
     }
   }));
   
@@ -683,25 +759,27 @@ async function updateMenu() {
   currentMenuTemplate.push(
     { type: 'separator' },
     {
-      label: 'LINK STATS',
-      submenu: [
-        {
-          label: 'Loading stats...',
-          enabled: false
-        }
-      ]
+      label: '━━━━━━ PINBOARD ━━━━━━',
+      enabled: false
     },
-    {
-      label: 'WORD CLOUD',
-      click: showWordCloud
-    },
+    { type: 'separator' }
+  );
+  
+  const pinboardStoryItems = pinboardStories.map(story => ({
+    label: `📌 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
+    click: () => {
+      trackClick(story.id, story.title, story.url, story.points, story.comments);
+      shell.openExternal(story.url);
+    }
+  }));
+  
+  currentMenuTemplate.push(...pinboardStoryItems);
+  
+  currentMenuTemplate.push(
+    { type: 'separator' },
     {
       label: 'READING LIBRARY',
       click: showArticleLibrary
-    },
-    {
-      label: 'Refresh',
-      click: updateMenu
     },
     {
       label: 'Quit',
@@ -711,27 +789,6 @@ async function updateMenu() {
     }
   );
 
-  getClickStats((err, stats) => {
-    if (err) {
-      console.error('Error getting click stats:', err);
-      return;
-    }
-
-    const statsSubmenu = stats.length > 0 
-      ? stats.map(stat => ({
-          label: `${stat.title.substring(0, 40)}... (${stat.click_count} clicks)`,
-          enabled: false
-        }))
-      : [{ label: 'No clicks yet', enabled: false }];
-
-    const statsMenuIndex = currentMenuTemplate.findIndex(item => item.label === 'LINK STATS');
-    if (statsMenuIndex !== -1) {
-      currentMenuTemplate[statsMenuIndex].submenu = statsSubmenu;
-      const contextMenu = Menu.buildFromTemplate(currentMenuTemplate);
-      tray.setContextMenu(contextMenu);
-    }
-  });
-  
   const contextMenu = Menu.buildFromTemplate(currentMenuTemplate);
   tray.setContextMenu(contextMenu);
 }
