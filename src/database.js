@@ -125,6 +125,10 @@ function initDatabase(callback) {
     db.run(`ALTER TABLE clicks ADD COLUMN tags TEXT`, () => {});
     db.run(`ALTER TABLE stories ADD COLUMN impression_count INTEGER DEFAULT 0`, () => {});
     
+    // Add comments URL columns for Reddit and HN posts
+    db.run(`ALTER TABLE clicks ADD COLUMN comments_url TEXT`, () => {});
+    db.run(`ALTER TABLE stories ADD COLUMN comments_url TEXT`, () => {});
+    
     // Create unique index on URL to prevent duplicates
     db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_url ON stories(url)`, () => {});
     
@@ -175,15 +179,26 @@ function trackStoryAppearance(story) {
       storyId = hashStringToInt(story.id);
     }
     
+    // Generate comments URL based on source
+    let commentsUrl = null;
+    if (story.comments_url) {
+      commentsUrl = story.comments_url;
+    } else if (story.url && story.url.includes('reddit.com')) {
+      commentsUrl = story.url; // For Reddit, the URL is the comments page
+    } else if (story.id && typeof story.id === 'number') {
+      // For HN, generate comments URL from story ID
+      commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+    }
+    
     // Try to insert new story, ignore if URL already exists due to unique constraint
-    db.run('INSERT OR IGNORE INTO stories (story_id, title, url, archive_url, points, comments, impression_count) VALUES (?, ?, ?, ?, ?, ?, 1)', 
-      [storyId, story.title, story.url, archiveUrl, story.points, story.comments], function(err) {
+    db.run('INSERT OR IGNORE INTO stories (story_id, title, url, archive_url, comments_url, points, comments, impression_count) VALUES (?, ?, ?, ?, ?, ?, ?, 1)', 
+      [storyId, story.title, story.url, archiveUrl, commentsUrl, story.points, story.comments], function(err) {
         if (err) {
           console.error('Error inserting story:', err);
         } else if (this.changes === 0) {
           // Story already exists, increment impression count
-          db.run('UPDATE stories SET impression_count = impression_count + 1, points = ?, comments = ? WHERE url = ?', 
-            [story.points, story.comments, story.url], (updateErr) => {
+          db.run('UPDATE stories SET impression_count = impression_count + 1, points = ?, comments = ?, comments_url = ? WHERE url = ?', 
+            [story.points, story.comments, commentsUrl, story.url], (updateErr) => {
               if (updateErr) {
                 console.error('Error updating impression count:', updateErr);
               }
@@ -196,7 +211,7 @@ function trackStoryAppearance(story) {
 /**
  * Track when a user clicks on a story
  */
-function trackClick(storyId, title, url, points, comments) {
+function trackClick(storyId, title, url, points, comments, commentsUrl = null) {
   if (db) {
     // Convert story ID to integer - use hash for string IDs
     let normalizedStoryId;
@@ -206,12 +221,22 @@ function trackClick(storyId, title, url, points, comments) {
       normalizedStoryId = hashStringToInt(storyId);
     }
     
+    // Generate comments URL if not provided
+    if (!commentsUrl) {
+      if (url && url.includes('reddit.com')) {
+        commentsUrl = url; // For Reddit, the URL is the comments page
+      } else if (typeof storyId === 'number') {
+        // For HN, generate comments URL from story ID
+        commentsUrl = `https://news.ycombinator.com/item?id=${storyId}`;
+      }
+    }
+    
     const archiveUrl = generateArchiveSubmissionUrl(url);
     db.get('SELECT first_seen_at FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
       const storyAddedAt = row ? row.first_seen_at : new Date().toISOString();
       
-      db.run('INSERT INTO clicks (story_id, title, url, archive_url, points, comments, story_added_at) VALUES (?, ?, ?, ?, ?, ?, ?)', 
-        [normalizedStoryId, title, url, archiveUrl, points, comments, storyAddedAt], function(err) {
+      db.run('INSERT INTO clicks (story_id, title, url, archive_url, comments_url, points, comments, story_added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 
+        [normalizedStoryId, title, url, archiveUrl, commentsUrl, points, comments, storyAddedAt], function(err) {
         if (err) {
           console.error('Error tracking click:', err);
         }

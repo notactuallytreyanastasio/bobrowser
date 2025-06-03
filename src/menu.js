@@ -47,7 +47,14 @@ function createSearchResultItems(searchResults) {
           
           const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
           const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-          trackClick(story.id, story.title, story.url, story.points, story.comments);
+          // For search results, comments URL might be stored or generated
+          let commentsUrl = story.comments_url;
+          if (!commentsUrl && story.url.includes('reddit.com')) {
+            commentsUrl = story.url;
+          } else if (!commentsUrl && typeof story.id === 'number') {
+            commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+          }
+          trackClick(story.id, story.title, story.url, story.points, story.comments, commentsUrl);
           
           // 1. Open archive.ph submission URL (triggers archiving)
           shell.openExternal(archiveSubmissionUrl);
@@ -205,7 +212,8 @@ async function updateMenu() {
             
             const archiveSubmissionUrl = generateArchiveSubmissionUrl(articleUrl);
             const archiveDirectUrl = generateArchiveDirectUrl(articleUrl);
-            trackClick(story.id, story.title, articleUrl, story.points, story.comments);
+            const hnCommentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+            trackClick(story.id, story.title, articleUrl, story.points, story.comments, hnCommentsUrl);
             
             // 1. Open archive.ph submission URL (triggers archiving)
             shell.openExternal(archiveSubmissionUrl);
@@ -288,9 +296,10 @@ async function updateMenu() {
           console.log('Reddit story clicked:', story.title);
           // For Reddit: open archive + actual content + Reddit discussion
           const targetUrl = story.is_self ? story.url : story.actual_url;
+          const redditCommentsUrl = story.url; // Reddit discussion URL
           const archiveSubmissionUrl = generateArchiveSubmissionUrl(targetUrl);
           const archiveDirectUrl = generateArchiveDirectUrl(targetUrl);
-          trackClick(story.id, story.title, targetUrl, story.points, story.comments);
+          trackClick(story.id, story.title, targetUrl, story.points, story.comments, redditCommentsUrl);
           
           // 1. Open archive.ph submission URL (triggers archiving)
           shell.openExternal(archiveSubmissionUrl);
@@ -387,7 +396,7 @@ async function updateMenu() {
           // For Pinboard: open archive + article (no discussion)
           const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
           const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-          trackClick(story.id, story.title, story.url, story.points, story.comments);
+          trackClick(story.id, story.title, story.url, story.points, story.comments, null);
           
           // 1. Open archive.ph submission URL (triggers archiving)
           shell.openExternal(archiveSubmissionUrl);

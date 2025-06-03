@@ -656,6 +656,7 @@ function showDatabaseBrowser() {
       c.story_id,
       c.title,
       c.url,
+      c.comments_url,
       c.points,
       c.comments,
       c.clicked_at,
@@ -673,13 +674,13 @@ function showDatabaseBrowser() {
 
       // Create compact clickable links
       const clicksHtml = rows.map(click => {
-        const isReddit = click.url && click.url.includes('reddit.com');
+        const hasComments = click.comments_url && click.comments_url !== click.url;
         return `
           <div style="margin-bottom: 4px; line-height: 1.3;">
             <a href="#" onclick="openLink('${click.url}')" style="font-size: 12pt; color: #0066cc; text-decoration: none; margin-right: 8px;">
               ${click.title || 'Untitled'}
             </a>
-            ${isReddit ? `<a href="#" onclick="openLink('${click.url}')" style="font-size: 10pt; color: #888; text-decoration: none;">[comments]</a>` : ''}
+            ${hasComments ? `<a href="#" onclick="openLink('${click.comments_url}')" style="font-size: 10pt; color: #888; text-decoration: none;">[comments]</a>` : ''}
             <span style="font-size: 10pt; color: #888; margin-left: 8px;">
               ${click.clicked_at ? new Date(click.clicked_at).toLocaleDateString() : ''}
               ${click.points ? ` • ${click.points}pts` : ''}
