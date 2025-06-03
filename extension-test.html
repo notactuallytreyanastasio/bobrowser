@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reading Tracker Extension Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-controls {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #007aff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        article {
+            margin-top: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-controls">
+        <h2>📚 Reading Tracker Test Page</h2>
+        <p>This page simulates the extension functionality without requiring Safari extension installation.</p>
+        
+        <button onclick="testContentDetection()">Test Content Detection</button>
+        <button onclick="testSaveArticle()">Save This Article</button>
+        <button onclick="testApiConnection()">Test API Connection</button>
+        <button onclick="openLibrary()">Open Reading Library</button>
+        
+        <div id="status"></div>
+    </div>
+
+    <article>
+        <h1>Sample Article: The Future of Personal Knowledge Management</h1>
+        <p><em>By Test Author • January 15, 2024</em></p>
+        
+        <p>In an age of information overload, the ability to capture, organize, and retrieve knowledge has become more critical than ever. Traditional bookmarking falls short when we need to truly understand and remember what we've read.</p>
+        
+        <p>This is where modern reading tracking tools come into play. Unlike simple bookmarks, these systems capture the full content of articles, making them searchable and preserving them against link rot.</p>
+        
+        <h2>Key Benefits of Reading Tracking</h2>
+        
+        <p><strong>Content Preservation:</strong> Articles are saved in their entirety, ensuring you can access them even if the original source disappears or changes.</p>
+        
+        <p><strong>Full-Text Search:</strong> Every word becomes searchable, allowing you to find that half-remembered insight from months ago.</p>
+        
+        <p><strong>Reading Analytics:</strong> Understanding your reading patterns helps optimize your learning and information consumption habits.</p>
+        
+        <p><strong>Distraction-Free Reading:</strong> Clean, reader-mode extraction removes ads and navigation, focusing purely on content.</p>
+        
+        <h2>The Safari Extension Advantage</h2>
+        
+        <p>Browser extensions provide the perfect integration point for reading tracking. They can detect when you're actually reading (versus just browsing), automatically save content when you finish articles, and maintain a seamless workflow.</p>
+        
+        <p>By combining browser-based content detection with local storage and full-text search, we create a powerful personal knowledge management system that respects privacy while maximizing utility.</p>
+        
+        <h2>Implementation Details</h2>
+        
+        <p>The technical approach involves content scripts that analyze page structure, detect readable content using heuristics similar to reader mode algorithms, and track user engagement through scroll patterns and time spent.</p>
+        
+        <p>This creates an intelligent system that knows the difference between briefly skimming a page and actually reading an article thoroughly.</p>
+        
+        <p>The future of reading is not just about consuming information, but about building a personal knowledge base that grows with you over time.</p>
+    </article>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:3002/api';
+        
+        function showStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + (isError ? 'error' : 'success');
+        }
+        
+        async function testApiConnection() {
+            try {
+                console.log('Testing API at:', `${API_BASE}/ping`);
+                const response = await fetch(`${API_BASE}/ping`);
+                console.log('Response status:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('Response data:', data);
+                showStatus('✅ API connection successful!');
+            } catch (error) {
+                console.error('API test error:', error);
+                showStatus(`❌ API connection failed: ${error.message}`, true);
+            }
+        }
+        
+        function testContentDetection() {
+            // Simulate the extension's content detection logic
+            const article = document.querySelector('article');
+            const title = article.querySelector('h1').textContent;
+            const wordCount = article.textContent.split(/\s+/).length;
+            
+            showStatus(`✅ Content detected: "${title}" (${wordCount} words)`);
+        }
+        
+        async function testSaveArticle() {
+            try {
+                const article = document.querySelector('article');
+                const title = article.querySelector('h1').textContent;
+                const author = article.querySelector('em').textContent.split('•')[0].replace('By ', '').trim();
+                const content = article.innerHTML;
+                const textContent = article.textContent;
+                const wordCount = textContent.split(/\s+/).length;
+                
+                const articleData = {
+                    url: window.location.href,
+                    title: title,
+                    author: author,
+                    publishDate: '2024-01-15',
+                    content: content,
+                    textContent: textContent,
+                    wordCount: wordCount,
+                    readingTime: 30000 // Simulate 30 seconds reading time
+                };
+                
+                const response = await fetch(`${API_BASE}/articles`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(articleData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    showStatus(`✅ Article saved successfully! (ID: ${result.id})`);
+                } else {
+                    throw new Error('Failed to save article');
+                }
+            } catch (error) {
+                showStatus('❌ Failed to save article: ' + error.message, true);
+            }
+        }
+        
+        async function openLibrary() {
+            try {
+                const response = await fetch('http://127.0.0.1:3002/api/open/library', {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    showStatus('✅ Reading Library opened!');
+                } else {
+                    throw new Error('Failed to open library');
+                }
+            } catch (error) {
+                showStatus('❌ Failed to open library: ' + error.message, true);
+            }
+        }
+        
+        // Auto-test API connection on page load
+        window.addEventListener('load', testApiConnection);
+    </script>
+</body>
+</html>
