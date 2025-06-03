@@ -6,8 +6,10 @@ const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
-const puppeteer = require('puppeteer');
 const crypto = require('crypto');
+const { exec, spawn } = require('child_process');
+const util = require('util');
+const execAsync = util.promisify(exec);
 require('dotenv').config();
 
 if (process.env.NODE_ENV === 'development') {
@@ -223,10 +225,31 @@ if (!fs.existsSync(archivesDir)) {
   fs.mkdirSync(archivesDir, { recursive: true });
 }
 
-async function archivePageWithPuppeteer(url, title) {
-  let browser;
+// Check if monolith is available in PATH
+async function checkMonolithAvailable() {
   try {
-    console.log(`Starting archive process for: ${url}`);
+    const { stdout } = await execAsync('which monolith');
+    console.log(`✅ Monolith found at: ${stdout.trim()}`);
+    
+    const { stdout: version } = await execAsync('monolith --version');
+    console.log(`📦 Monolith version: ${version.trim()}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Monolith not found in PATH. Please install: cargo install monolith');
+    console.error('   Or visit: https://crates.io/crates/monolith');
+    return false;
+  }
+}
+
+async function archivePageWithMonolith(url, title) {
+  try {
+    console.log(`🗃️  Starting monolith archive for: ${url}`);
+    
+    // Check monolith availability
+    const monolithAvailable = await checkMonolithAvailable();
+    if (!monolithAvailable) {
+      throw new Error('Monolith binary not available');
+    }
     
     // Generate unique filename based on URL hash
     const urlHash = crypto.createHash('md5').update(url).digest('hex');
@@ -234,162 +257,77 @@ async function archivePageWithPuppeteer(url, title) {
     const fileName = `${safeTitle}_${urlHash}.html`;
     const filePath = path.join(archivesDir, fileName);
     
-    // Launch browser
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor'
-      ]
+    console.log(`📥 Downloading and bundling: ${url}`);
+    
+    // Run monolith with options for complete archiving
+    const monolithCmd = [
+      'monolith',
+      url,
+      '--output', filePath,
+      '--silent',           // Suppress progress output
+      '--isolate',          // Remove all remote requests
+      '--no-css',           // Don't inline CSS (keep original styling)
+      '--no-frames',        // Remove iframes
+      '--no-js',            // Remove JavaScript
+      '--no-images',        // Remove images (makes files smaller)
+      '--user-agent', '"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"'
+    ].join(' ');
+    
+    console.log(`🔧 Running: ${monolithCmd}`);
+    
+    const { stdout, stderr } = await execAsync(monolithCmd, { 
+      timeout: 30000,  // 30 second timeout
+      maxBuffer: 10 * 1024 * 1024  // 10MB buffer
     });
     
-    const page = await browser.newPage();
+    if (stderr && !stderr.includes('WARN')) {
+      console.warn('⚠️  Monolith warnings:', stderr);
+    }
     
-    // Set a realistic user agent
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    // Check if file was created successfully
+    if (!fs.existsSync(filePath)) {
+      throw new Error('Monolith did not create output file');
+    }
     
-    // Set viewport
-    await page.setViewport({ width: 1200, height: 800 });
+    const stats = fs.statSync(filePath);
+    console.log(`✅ Archive created: ${filePath} (${(stats.size / 1024).toFixed(1)} KB)`);
     
-    console.log(`Navigating to: ${url}`);
+    // Try to extract metadata from the archived file
+    let archivedContent = '';
+    try {
+      archivedContent = fs.readFileSync(filePath, 'utf8');
+    } catch (readError) {
+      console.warn('⚠️  Could not read archived file for metadata extraction');
+    }
     
-    // Navigate with longer timeout and wait for network idle
-    await page.goto(url, { 
-      waitUntil: 'networkidle2', 
-      timeout: 30000 
-    });
+    // Extract basic metadata from HTML
+    const titleMatch = archivedContent.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const descriptionMatch = archivedContent.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
+    const authorMatch = archivedContent.match(/<meta[^>]*name=["']author["'][^>]*content=["']([^"']+)["']/i);
     
-    // Wait a bit more for any lazy-loaded content
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Remove ads, popups, and other unwanted elements
-    await page.evaluate(() => {
-      const selectorsToRemove = [
-        '[class*="ad"]', '[id*="ad"]',
-        '[class*="popup"]', '[class*="modal"]',
-        '[class*="overlay"]', '[class*="banner"]',
-        '[class*="cookie"]', '[class*="newsletter"]',
-        '[class*="subscription"]', '[class*="paywall"]',
-        '.advertisement', '.ads', '.ad-container',
-        'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]'
-      ];
-      
-      selectorsToRemove.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => el.remove());
-      });
-    });
-    
-    // Get the full page content
-    const content = await page.content();
-    
-    // Get page metadata
-    const pageInfo = await page.evaluate(() => {
-      const getMetaContent = (name) => {
-        const meta = document.querySelector(`meta[name="${name}"], meta[property="${name}"], meta[property="og:${name}"]`);
-        return meta ? meta.getAttribute('content') : '';
-      };
-      
-      return {
-        title: document.title,
-        description: getMetaContent('description'),
-        author: getMetaContent('author'),
-        publishDate: getMetaContent('article:published_time') || getMetaContent('date'),
-        siteName: getMetaContent('site_name') || getMetaContent('og:site_name')
-      };
-    });
-    
-    // Create a self-contained HTML file
-    const archivedContent = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>📚 ${pageInfo.title || title}</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        .archive-header {
-            background: #f8f9fa;
-            border-bottom: 2px solid #e9ecef;
-            padding: 20px;
-            margin-bottom: 20px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-        }
-        .archive-header h1 {
-            margin: 0 0 10px 0;
-            color: #495057;
-            font-size: 18px;
-        }
-        .archive-info {
-            font-size: 14px;
-            color: #6c757d;
-        }
-        .archive-info a {
-            color: #007bff;
-            text-decoration: none;
-        }
-        .archive-info a:hover {
-            text-decoration: underline;
-        }
-        .archive-content {
-            max-width: none !important;
-        }
-        /* Hide any remaining ads or popups */
-        [class*="ad"], [id*="ad"],
-        [class*="popup"], [class*="modal"],
-        [class*="overlay"], [class*="banner"],
-        [class*="cookie"], [class*="newsletter"] {
-            display: none !important;
-        }
-    </style>
-</head>
-<body>
-    <div class="archive-header">
-        <h1>📚 Archived Page</h1>
-        <div class="archive-info">
-            <strong>Original URL:</strong> <a href="${url}" target="_blank">${url}</a><br>
-            <strong>Archived:</strong> ${new Date().toLocaleString()}<br>
-            ${pageInfo.author ? `<strong>Author:</strong> ${pageInfo.author}<br>` : ''}
-            ${pageInfo.publishDate ? `<strong>Published:</strong> ${pageInfo.publishDate}<br>` : ''}
-        </div>
-    </div>
-    <div class="archive-content">
-        ${content.replace(/<head>[\s\S]*?<\/head>/i, '').replace(/<\/body>[\s\S]*$/i, '')}
-    </div>
-</body>
-</html>`;
-    
-    // Save the archived content
-    fs.writeFileSync(filePath, archivedContent, 'utf8');
-    
-    console.log(`Page archived successfully: ${filePath}`);
+    const extractedTitle = titleMatch ? titleMatch[1].trim() : title;
+    const description = descriptionMatch ? descriptionMatch[1].trim() : null;
+    const author = authorMatch ? authorMatch[1].trim() : null;
     
     return {
       success: true,
       filePath,
       fileName,
-      title: pageInfo.title || title,
-      author: pageInfo.author,
-      description: pageInfo.description,
-      publishDate: pageInfo.publishDate,
+      title: extractedTitle,
+      author,
+      description,
       archiveDate: new Date().toISOString(),
       originalUrl: url,
-      fileSize: Buffer.byteLength(archivedContent, 'utf8')
+      fileSize: stats.size
     };
     
   } catch (error) {
-    console.error(`Error archiving page ${url}:`, error);
+    console.error(`❌ Error archiving page ${url}:`, error.message);
     return {
       success: false,
       error: error.message,
       originalUrl: url
     };
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
   }
 }
 
@@ -822,7 +760,7 @@ async function updateMenu() {
   currentMenuTemplate.push(
     { type: 'separator' },
     {
-      label: '📚 Saved Articles',
+      label: '🗃️ Article Archive',
       click: () => {
         showArticleLibrary();
       }
@@ -951,9 +889,9 @@ function initApiServer() {
     res.status(500).json({ error: err.message });
   });
   
-  // Save article from Safari extension with Puppeteer archiving
+  // Save article with monolith archiving
   server.post('/api/articles', async (req, res) => {
-    console.log('API: Archiving article with Puppeteer');
+    console.log('🗃️  API: Archiving article with monolith');
     
     try {
       const { url, title } = req.body;
@@ -962,8 +900,8 @@ function initApiServer() {
         return res.status(400).json({ error: 'URL is required' });
       }
       
-      // Archive the page with Puppeteer
-      const archiveResult = await archivePageWithPuppeteer(url, title || 'Untitled');
+      // Archive the page with monolith
+      const archiveResult = await archivePageWithMonolith(url, title || 'Untitled');
       
       if (!archiveResult.success) {
         return res.status(500).json({ error: archiveResult.error });
@@ -1306,15 +1244,45 @@ function showArticleLibrary() {
         </head>
         <body>
           <div class="header">
-            <h1>📚 Saved Articles</h1>
-            <div class="stats">${articles.length} articles saved</div>
+            <h1>🗃️ Article Archive</h1>
+            <div class="stats">${articles.length} articles archived • ${articles.filter(a => a.archive_path).length} offline ready</div>
+          </div>
+          
+          <div class="archive-form" style="
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          ">
+            <h3 style="margin-top: 0;">Archive New Article</h3>
+            <div style="display: flex; gap: 10px;">
+              <input type="url" id="urlInput" placeholder="Enter URL to archive..." style="
+                flex: 1;
+                padding: 12px;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                font-size: 14px;
+              ">
+              <button onclick="archiveUrl()" style="
+                padding: 12px 20px;
+                background: #28a745;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                cursor: pointer;
+                white-space: nowrap;
+              ">🗃️ Archive</button>
+            </div>
+            <div id="archiveStatus" style="margin-top: 10px; font-size: 14px;"></div>
           </div>
           
           <div class="article-list">
             ${articles.length === 0 ? `
               <div class="empty-state">
-                <h2>No articles saved yet</h2>
-                <p>Use the bookmarklet to save articles from any webpage</p>
+                <h2>No articles archived yet</h2>
+                <p>Enter a URL above to archive your first article for offline reading</p>
               </div>
             ` : articles.map(article => `
               <div class="article-item" onclick="openArchivedArticle('${article.archive_path || ''}', '${article.url}')">
@@ -1375,6 +1343,63 @@ function showArticleLibrary() {
               const date = new Date(dateStr);
               return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             }
+            
+            async function archiveUrl() {
+              const urlInput = document.getElementById('urlInput');
+              const statusDiv = document.getElementById('archiveStatus');
+              const url = urlInput.value.trim();
+              
+              if (!url) {
+                statusDiv.innerHTML = '<span style="color: #dc3545;">❌ Please enter a URL</span>';
+                return;
+              }
+              
+              if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                statusDiv.innerHTML = '<span style="color: #dc3545;">❌ URL must start with http:// or https://</span>';
+                return;
+              }
+              
+              statusDiv.innerHTML = '<span style="color: #007bff;">🗃️ Archiving... This may take a few seconds</span>';
+              
+              try {
+                const response = await fetch('https://127.0.0.1:3003/api/articles', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    url: url,
+                    title: 'Untitled'
+                  })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                  statusDiv.innerHTML = \`<span style="color: #28a745;">✅ Successfully archived "\${result.title}"</span>\`;
+                  urlInput.value = '';
+                  
+                  // Reload the page after 2 seconds to show the new article
+                  setTimeout(() => {
+                    location.reload();
+                  }, 2000);
+                } else {
+                  statusDiv.innerHTML = \`<span style="color: #dc3545;">❌ Failed to archive: \${result.error || 'Unknown error'}</span>\`;
+                }
+              } catch (error) {
+                console.error('Archive error:', error);
+                statusDiv.innerHTML = \`<span style="color: #dc3545;">❌ Network error: \${error.message}</span>\`;
+              }
+            }
+            
+            // Allow Enter key to trigger archiving
+            document.addEventListener('DOMContentLoaded', function() {
+              document.getElementById('urlInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                  archiveUrl();
+                }
+              });
+            });
           </script>
         </body>
         </html>
