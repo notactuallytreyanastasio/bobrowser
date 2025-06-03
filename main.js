@@ -887,18 +887,35 @@ function initApiServer() {
 
 // showArticleLibrary function removed - will be revisited fresh
 
-app.whenReady().then(() => {
-  console.log('App ready, initializing components...');
+// Check if running in server-only mode
+if (process.env.NODE_ENV === 'server' || process.argv.includes('--server-only')) {
+  console.log('🖥️  Starting in server-only mode...');
   initDatabase();
   setTimeout(() => {
     console.log('Starting API server after database init...');
     initApiServer();
   }, 1000);
-  createTray();
-});
+} else {
+  // Normal Electron app mode
+  app.whenReady().then(() => {
+    console.log('App ready, initializing components...');
+    initDatabase();
+    setTimeout(() => {
+      console.log('Starting API server after database init...');
+      initApiServer();
+    }, 1000);
+    createTray();
+  });
+}
 
-app.on('window-all-closed', (event) => {
-  event.preventDefault();
-});
+// Only add Electron event handlers if not in server mode
+if (process.env.NODE_ENV !== 'server' && !process.argv.includes('--server-only')) {
+  app.on('window-all-closed', (event) => {
+    event.preventDefault();
+  });
+}
 
-app.dock?.hide();
+// Only hide dock if not in server mode
+if (process.env.NODE_ENV !== 'server' && !process.argv.includes('--server-only')) {
+  app.dock?.hide();
+}
