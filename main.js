@@ -1,10 +1,26 @@
+/**
+ * BOB - A reading tracker and article aggregator
+ * 
+ * Features:
+ * - Aggregates stories from Hacker News, Reddit, and Pinboard
+ * - Tracks reading patterns and story impressions
+ * - Provides system tray menu for quick access
+ * - API server for Safari extension integration
+ * - Article archiving and offline reading (disabled pending implementation)
+ * 
+ * @author Reading Tracker
+ * @version 1.0.0
+ */
+
+// Core dependencies
 const { app, Tray, Menu, shell, BrowserWindow, dialog } = require('electron');
 const axios = require('axios');
+const express = require('express');
+const cors = require('cors');
+const https = require('https');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
-// API server dependencies removed - using archive.ph instead
-const crypto = require('crypto');
 require('dotenv').config();
 
 if (process.env.NODE_ENV === 'development') {
@@ -16,112 +32,23 @@ if (process.env.NODE_ENV === 'development') {
 
 let tray = null;
 let db = null;
-let currentMenuTemplate = null;
 let redditToken = null;
 let redditCache = {};
 let apiServer = null;
 let httpsServer = null;
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
-const API_PORT = 3002;
-const HTTPS_PORT = 3003;
 
-function generateFakeData() {
-  if (!db) return;
-  
-  console.log('Generating fake click data...');
-  
-  const fakeHNTitles = [
-    'Ask HN: What\'s your favorite programming language?',
-    'Show HN: I built a web scraper in Python',
-    'The future of artificial intelligence',
-    'Why blockchain will change everything',
-    'Startup acquired for $100M',
-    'New JavaScript framework released',
-    'Bitcoin hits new all-time high',
-    'Machine learning breakthrough announced',
-    'Open source project gains massive adoption',
-    'Tech giant announces layoffs',
-    'Quantum computing milestone reached',
-    'Privacy concerns with new app',
-    'Developer tools comparison',
-    'Remote work productivity tips',
-    'Cybersecurity threat discovered',
-    'Cloud computing costs analysis',
-    'Mobile app development trends',
-    'Database performance optimization',
-    'API design best practices',
-    'Code review horror stories'
-  ];
-  
-  const fakeRedditTitles = [
-    'AITAH for telling my roommate to clean up?',
-    'ELI5: How does the internet work?',
-    'Breaking: Major news event happening now',
-    'This TV show just got cancelled',
-    'Elixir pattern matching explained',
-    'Update: Relationship drama continues',
-    'TIFU by accidentally deleting my code',
-    'LPT: Always backup your data',
-    'TIL something fascinating about history',
-    'Wholesome story about random kindness',
-    'Drama in popular subreddit',
-    'Celebrity announces new project',
-    'Weather event causes chaos',
-    'Sports team makes surprising trade',
-    'Gaming community outraged over changes',
-    'Movie review sparks debate',
-    'Recipe that changed my life',
-    'Pet does something adorable',
-    'Life hack that actually works',
-    'Conspiracy theory debunked'
-  ];
-  
-  // Generate 4000 unique stories first
-  for (let i = 0; i < 4000; i++) {
-    const isHN = Math.random() > 0.5;
-    const titleBase = isHN ? fakeHNTitles[Math.floor(Math.random() * fakeHNTitles.length)] : fakeRedditTitles[Math.floor(Math.random() * fakeRedditTitles.length)];
-    const title = `${titleBase} (${i})`;
-    const points = Math.floor(Math.random() * 1000) + 1;
-    const comments = Math.floor(Math.random() * 200) + 1;
-    const storyId = 100000 + i;
-    
-    // Add to stories table
-    const daysAgo = Math.floor(Math.random() * 90); // Random day in last 3 months
-    const addedDate = new Date(Date.now() - (daysAgo * 24 * 60 * 60 * 1000)).toISOString();
-    
-    db.run('INSERT OR IGNORE INTO stories (story_id, title, points, comments, first_seen_at) VALUES (?, ?, ?, ?, ?)', 
-      [storyId, title, points, comments, addedDate]);
-  }
-  
-  // Generate 5000 clicks
-  setTimeout(() => {
-    console.log('Generating 5000 fake clicks...');
-    for (let i = 0; i < 5000; i++) {
-      const storyId = 100000 + Math.floor(Math.random() * 4000);
-      const isHN = Math.random() > 0.5;
-      const titleBase = isHN ? fakeHNTitles[Math.floor(Math.random() * fakeHNTitles.length)] : fakeRedditTitles[Math.floor(Math.random() * fakeRedditTitles.length)];
-      const title = `${titleBase} (${storyId - 100000})`;
-      const url = isHN ? `https://news.ycombinator.com/item?id=${storyId}` : `https://old.reddit.com/r/random/comments/${storyId}/`;
-      const points = Math.floor(Math.random() * 1000) + 1;
-      const comments = Math.floor(Math.random() * 200) + 1;
-      
-      // Random click time in last 3 months
-      const daysAgo = Math.floor(Math.random() * 90);
-      const hoursAgo = Math.floor(Math.random() * 24);
-      const minutesAgo = Math.floor(Math.random() * 60);
-      const clickedDate = new Date(Date.now() - (daysAgo * 24 * 60 * 60 * 1000) - (hoursAgo * 60 * 60 * 1000) - (minutesAgo * 60 * 1000)).toISOString();
-      
-      // Story added date (always before click date)
-      const storyDaysAgo = daysAgo + Math.floor(Math.random() * 30) + 1;
-      const storyAddedDate = new Date(Date.now() - (storyDaysAgo * 24 * 60 * 60 * 1000)).toISOString();
-      
-      db.run('INSERT INTO clicks (story_id, title, url, points, comments, story_added_at, clicked_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [storyId, title, url, points, comments, storyAddedDate, clickedDate]);
-    }
-    console.log('Fake data generation complete!');
-  }, 1000);
-}
+// Configuration constants - can be overridden by environment variables
+const CACHE_DURATION = parseInt(process.env.CACHE_DURATION) || 15 * 60 * 1000; // 15 minutes
+const API_PORT = parseInt(process.env.API_PORT) || 3002;
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT) || 3003;
+const USER_AGENT = process.env.USER_AGENT || 'Reading-Tracker/1.0';
+const DEFAULT_SUBREDDITS = process.env.REDDIT_SUBREDDITS ? process.env.REDDIT_SUBREDDITS.split(',') : ['news', 'television', 'elixir', 'aitah', 'bestofredditorupdates', 'explainlikeimfive'];
 
+
+/**
+ * Initialize SQLite database with required tables and schema
+ * @param {Function} callback - Callback function to execute after initialization
+ */
 function initDatabase(callback) {
   db = new sqlite3.Database('clicks.db');
   
@@ -208,32 +135,32 @@ function initDatabase(callback) {
     // Create unique index on URL to prevent duplicates
     db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_url ON stories(url)`, () => {});
     
-    // Check if we need to generate fake data
-    db.get('SELECT COUNT(*) as count FROM clicks', (err, row) => {
-      if (!err && row.count < 100) {
-        console.log('Database appears empty, generating fake data...');
-        generateFakeData();
-      }
-      if (callback) callback();
-    });
+    if (callback) callback();
   });
 }
 
-// Generate archive.ph submission URL to force archiving
+/**
+ * Generate archive.ph submission URL to force archiving
+ * @param {string} originalUrl - The URL to archive
+ * @returns {string} Archive submission URL
+ */
 function generateArchiveSubmissionUrl(originalUrl) {
-  // Use archive.ph submission endpoint with ?url= parameter
-  // This forces archiving instead of just searching for existing archives
-  // Format: https://dgy3yyibpm3nn7.archive.ph/?url=ORIGINAL_URL
   return `https://dgy3yyibpm3nn7.archive.ph/?url=${encodeURIComponent(originalUrl)}`;
 }
 
-// Generate direct archive.ph URL for accessing archived version
+/**
+ * Generate direct archive.ph URL for accessing archived version
+ * @param {string} originalUrl - The original URL
+ * @returns {string} Direct archive URL
+ */
 function generateArchiveDirectUrl(originalUrl) {
-  // Direct archive.ph format: https://archive.ph/ORIGINAL_URL
-  // This goes directly to the archived page (if it exists)
   return `https://archive.ph/${originalUrl}`;
 }
 
+/**
+ * Track when a story appears in the menu (impression tracking)
+ * @param {Object} story - Story object with id, title, url, points, comments
+ */
 function trackStoryAppearance(story) {
   if (db) {
     const archiveUrl = generateArchiveSubmissionUrl(story.url);
@@ -256,6 +183,14 @@ function trackStoryAppearance(story) {
   }
 }
 
+/**
+ * Track when a user clicks on a story
+ * @param {number} storyId - Unique story identifier
+ * @param {string} title - Story title
+ * @param {string} url - Story URL
+ * @param {number} points - Story points/score
+ * @param {number} comments - Number of comments
+ */
 function trackClick(storyId, title, url, points, comments) {
   if (db) {
     const archiveUrl = generateArchiveSubmissionUrl(url);
@@ -266,8 +201,6 @@ function trackClick(storyId, title, url, points, comments) {
         [storyId, title, url, archiveUrl, points, comments, storyAddedAt], function(err) {
         if (err) {
           console.error('Error tracking click:', err);
-        } else {
-          // Stats menu removed
         }
       });
     });
@@ -296,7 +229,6 @@ function addTagToStory(storyId, tag) {
             if (err) {
               console.error('Error adding tag:', err);
             } else {
-              console.log(`Added tag "${cleanTag}" to story ${storyId}`);
               // Refresh the menu to show updated tags
               updateMenu();
             }
@@ -334,7 +266,6 @@ function removeTagFromStory(storyId, tagToRemove) {
           if (err) {
             console.error('Error removing tag:', err);
           } else {
-            console.log(`Removed tag "${tagToRemove}" from story ${storyId}`);
             updateMenu();
           }
         });
@@ -616,8 +547,6 @@ async function promptForRedditCredentials() {
   // Update process.env for current session
   process.env.REDDIT_CLIENT_ID = credentials.clientId;
   process.env.REDDIT_CLIENT_SECRET = credentials.clientSecret;
-  
-  console.log('Reddit credentials saved to .env file');
 }
 
 async function getRedditToken() {
@@ -635,13 +564,12 @@ async function getRedditToken() {
         headers: {
           'Authorization': `Basic ${credentials}`,
           'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'HN-Reader/1.0 by /u/yourUsername'
+          'User-Agent': USER_AGENT
         }
       }
     );
     
     redditToken = response.data.access_token;
-    console.log('Reddit token obtained');
   } catch (error) {
     console.error('Error getting Reddit token:', error);
   }
@@ -652,7 +580,6 @@ async function fetchSubredditPosts(subreddit) {
   
   // Check cache
   if (redditCache[subreddit] && (now - redditCache[subreddit].timestamp) < CACHE_DURATION) {
-    console.log(`Using cached data for r/${subreddit}`);
     return redditCache[subreddit].posts;
   }
   
@@ -664,7 +591,7 @@ async function fetchSubredditPosts(subreddit) {
     const response = await axios.get(`https://oauth.reddit.com/r/${subreddit}/hot`, {
       headers: {
         'Authorization': `Bearer ${redditToken}`,
-        'User-Agent': 'HN-Reader/1.0 by /u/yourUsername'
+        'User-Agent': USER_AGENT
       },
       params: {
         limit: 10
@@ -688,7 +615,6 @@ async function fetchSubredditPosts(subreddit) {
       timestamp: now
     };
     
-    console.log(`Fetched fresh data for r/${subreddit}`);
     return posts;
     
   } catch (error) {
@@ -697,8 +623,12 @@ async function fetchSubredditPosts(subreddit) {
   }
 }
 
+/**
+ * Fetch stories from configured Reddit subreddits
+ * @returns {Promise<Array>} Array of story objects
+ */
 async function fetchRedditStories() {
-  const subreddits = ['news', 'television', 'elixir', 'aitah', 'bestofredditorupdates', 'explainlikeimfive'];
+  const subreddits = DEFAULT_SUBREDDITS;
   
   try {
     const allPosts = [];
@@ -718,11 +648,15 @@ async function fetchRedditStories() {
   }
 }
 
+/**
+ * Fetch popular bookmarks from Pinboard
+ * @returns {Promise<Array>} Array of bookmark objects
+ */
 async function fetchPinboardPopular() {
   try {
     const response = await axios.get('https://pinboard.in/popular/', {
       headers: {
-        'User-Agent': 'Reading-Tracker/1.0'
+        'User-Agent': USER_AGENT
       }
     });
     
@@ -750,39 +684,11 @@ async function fetchPinboardPopular() {
       if (bookmarks.length > 0) break;
     }
     
-    // If regex fails, fallback to manual parsing with known URLs
+    // If regex parsing fails, return empty array rather than hardcoded fallback data
     if (bookmarks.length === 0) {
-      console.log('Regex failed, using fallback data');
-      const fallbackData = [
-        { title: "Probe lenses and focus stacking: the secrets to incredible photos taken inside instruments", url: "https://www.dpreview.com/photography/5400934096/probe-lenses-and-focus-stacking-the-secrets-to-incredible-photos-taken-inside-instruments", points: 13 },
-        { title: "The Who Cares Era", url: "https://dansinker.com/posts/2025-05-23-who-cares/", points: 11 },
-        { title: "WeatherStar 4000+", url: "https://weatherstar.netbymatt.com/", points: 10 },
-        { title: "Toolmen", url: "https://aworkinglibrary.com/writing/toolmen", points: 8 },
-        { title: "AI jobs danger: Sleepwalking into a white-collar bloodbath", url: "https://www.axios.com/2025/05/28/ai-jobs-white-collar-unemployment-anthropic", points: 8 },
-        { title: "C++ to Rust Phrasebook", url: "https://cel.cs.brown.edu/crp/", points: 7 },
-        { title: "microsandbox: Self-Hosted Platform for Secure Execution", url: "https://github.com/microsandbox/microsandbox", points: 6 },
-        { title: "BOND", url: "https://www.bondcap.com/reports/tai", points: 6 },
-        { title: "Trump Taps Palantir to Compile Data on Americans", url: "https://www.nytimes.com/2025/05/30/technology/trump-palantir-data-americans.html", points: 6 },
-        { title: "Reverse Engineering Linear's Sync Engine", url: "https://github.com/wzhudev/reverse-linear-sync-engine", points: 5 },
-        { title: "The Art of Command Line", url: "https://github.com/jlevy/the-art-of-command-line", points: 5 },
-        { title: "Building Better Software with Better Tools", url: "https://mitchellh.com/writing/building-better-software-with-better-tools", points: 4 },
-        { title: "Why I Still Use RSS", url: "https://atthis.link/blog/2021/rss.html", points: 4 },
-        { title: "The State of WebAssembly 2024", url: "https://blog.scottlogic.com/2024/11/18/state-of-webassembly-2024.html", points: 3 },
-        { title: "Understanding Modern CSS Layout", url: "https://web.dev/learn/css/layout/", points: 3 }
-      ];
-      
-      fallbackData.forEach((item, index) => {
-        bookmarks.push({
-          id: `pinboard_${index}`,
-          title: item.title,
-          url: item.url,
-          points: item.points,
-          comments: 0
-        });
-      });
+      console.warn('Pinboard parsing failed - no bookmarks found');
     }
     
-    console.log(`Fetched ${bookmarks.length} Pinboard popular bookmarks`);
     return bookmarks;
     
   } catch (error) {
@@ -791,6 +697,10 @@ async function fetchPinboardPopular() {
   }
 }
 
+/**
+ * Fetch top stories from Hacker News API
+ * @returns {Promise<Array>} Array of story objects
+ */
 async function fetchHNStories() {
   try {
     const topStoriesResponse = await axios.get('https://hacker-news.firebaseio.com/v0/topstories.json');
@@ -815,6 +725,9 @@ async function fetchHNStories() {
   }
 }
 
+/**
+ * Create system tray icon and initialize menu
+ */
 function createTray() {
   try {
     tray = new Tray(path.join(__dirname, 'icon.png'));
@@ -827,14 +740,15 @@ function createTray() {
     tray.on('right-click', updateMenu);
     
     setInterval(updateMenu, 300000);
-    console.log('Tray created successfully');
   } catch (error) {
     console.error('Error creating tray:', error);
   }
 }
 
+/**
+ * Update the tray menu with fresh stories from all sources
+ */
 async function updateMenu() {
-  console.log('Updating menu...');
   
   // Get all available tags first for dynamic menus
   const availableTags = await new Promise((resolve) => {
@@ -851,13 +765,12 @@ async function updateMenu() {
   const stories = await fetchHNStories();
   const redditStories = await fetchRedditStories();
   const pinboardStories = await fetchPinboardPopular();
-  console.log(`Fetched ${stories.length} HN stories, ${redditStories.length} Reddit stories, and ${pinboardStories.length} Pinboard bookmarks`);
   
   stories.forEach(story => trackStoryAppearance(story));
   redditStories.forEach(story => trackStoryAppearance(story));
   pinboardStories.forEach(story => trackStoryAppearance(story));
   
-  currentMenuTemplate = [
+  const menuTemplate = [
     {
       label: '━━━━━━ HACKER NEWS ━━━━━━',
       enabled: false
@@ -937,9 +850,9 @@ async function updateMenu() {
     };
   });
   
-  currentMenuTemplate.push(...storyItems);
+  menuTemplate.push(...storyItems);
   
-  currentMenuTemplate.push(
+  menuTemplate.push(
     { type: 'separator' },
     {
       label: '━━━━━━━ REDDIT ━━━━━━━',
@@ -1024,9 +937,9 @@ async function updateMenu() {
     ]
   }));
   
-  currentMenuTemplate.push(...redditStoryItems);
+  menuTemplate.push(...redditStoryItems);
   
-  currentMenuTemplate.push(
+  menuTemplate.push(
     { type: 'separator' },
     {
       label: '━━━━━━ PINBOARD ━━━━━━',
@@ -1096,9 +1009,9 @@ async function updateMenu() {
     ]
   }));
   
-  currentMenuTemplate.push(...pinboardStoryItems);
+  menuTemplate.push(...pinboardStoryItems);
   
-  currentMenuTemplate.push(
+  menuTemplate.push(
     { type: 'separator' },
     {
       label: '🗃️ Article Archive',
@@ -1115,7 +1028,7 @@ async function updateMenu() {
     }
   );
 
-  const contextMenu = Menu.buildFromTemplate(currentMenuTemplate);
+  const contextMenu = Menu.buildFromTemplate(menuTemplate);
   tray.setContextMenu(contextMenu);
 }
 
@@ -1190,8 +1103,10 @@ function getArticleStats(callback) {
 }
 
 // Initialize API server for Safari extension communication
+/**
+ * Initialize Express API server for Safari extension communication
+ */
 function initApiServer() {
-  console.log('Initializing API server...');
   
   const server = express();
   
@@ -1203,24 +1118,24 @@ function initApiServer() {
   
   server.use(express.json({ limit: '10mb' }));
   
-  // Serve archived files
-  server.use('/archives', express.static(archivesDir));
+  // TODO: Configure archives directory for serving archived files
+  // server.use('/archives', express.static(archivesDir));
   
-  // Add request logging
-  server.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-    next();
-  });
+  // Add request logging for development
+  if (process.env.NODE_ENV === 'development') {
+    server.use((req, res, next) => {
+      console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+      next();
+    });
+  }
   
-  // Simple test endpoint first
+  // Simple test endpoint
   server.get('/test', (req, res) => {
-    console.log('Test endpoint hit');
     res.send('API server is working!');
   });
   
   // Health check endpoint
   server.get('/api/ping', (req, res) => {
-    console.log('Ping endpoint hit');
     res.json({ status: 'ok', timestamp: Date.now() });
   });
   
@@ -1230,10 +1145,8 @@ function initApiServer() {
     res.status(500).json({ error: err.message });
   });
   
-  // Save article with monolith archiving
+  // Save article endpoint - archiving functionality disabled until archivePageWithMonolith is implemented
   server.post('/api/articles', async (req, res) => {
-    console.log('🗃️  API: Archiving article with monolith');
-    
     try {
       const { url, title } = req.body;
       
@@ -1241,23 +1154,17 @@ function initApiServer() {
         return res.status(400).json({ error: 'URL is required' });
       }
       
-      // Archive the page with monolith
-      const archiveResult = await archivePageWithMonolith(url, title || 'Untitled');
-      
-      if (!archiveResult.success) {
-        return res.status(500).json({ error: archiveResult.error });
-      }
-      
-      // Save to database
+      // TODO: Implement archivePageWithMonolith function for offline archiving
+      // For now, just save the URL and title to database
       const articleData = {
-        url: archiveResult.originalUrl,
-        title: archiveResult.title,
-        author: archiveResult.author,
-        publish_date: archiveResult.publishDate,
-        description: archiveResult.description,
-        archive_path: archiveResult.fileName,
-        archive_date: archiveResult.archiveDate,
-        file_size: archiveResult.fileSize,
+        url: url,
+        title: title || 'Untitled',
+        author: null,
+        publish_date: null,
+        description: null,
+        archive_path: null,
+        archive_date: null,
+        file_size: null,
         saved_at: new Date().toISOString()
       };
       
@@ -1272,19 +1179,18 @@ function initApiServer() {
             console.error('API: Error saving article to database:', err);
             res.status(500).json({ error: err.message });
           } else {
-            console.log(`Article archived successfully: ${articleData.title}`);
             res.json({
               success: true,
               id: this.lastID,
               ...articleData,
-              message: 'Article archived successfully for offline reading'
+              message: 'Article saved (archiving functionality disabled)'
             });
           }
         }
       );
       
     } catch (error) {
-      console.error('API: Error archiving article:', error);
+      console.error('API: Error saving article:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -1355,10 +1261,10 @@ function initApiServer() {
   
   // Start HTTP server
   try {
-    console.log(`Attempting to start HTTP server on port ${API_PORT}...`);
-    
     apiServer = server.listen(API_PORT, '127.0.0.1', () => {
-      console.log(`✅ Reading Tracker API server running on http://127.0.0.1:${API_PORT}`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`✅ Reading Tracker API server running on http://127.0.0.1:${API_PORT}`);
+      }
     });
     
     apiServer.on('error', (err) => {
@@ -1371,7 +1277,6 @@ function initApiServer() {
 
   // Start HTTPS server for mixed content compatibility
   try {
-    console.log(`Attempting to start HTTPS server on port ${HTTPS_PORT}...`);
     
     // Check if certificate files exist
     const certPath = path.join(__dirname, 'cert.pem');
@@ -1386,20 +1291,9 @@ function initApiServer() {
       httpsServer = https.createServer(httpsOptions, server);
       
       httpsServer.listen(HTTPS_PORT, '127.0.0.1', () => {
-        console.log(`✅ Reading Tracker HTTPS server running on https://127.0.0.1:${HTTPS_PORT}`);
-        console.log('💡 Use HTTPS endpoint for mixed content compatibility');
-        
-        // Test the HTTPS server
-        setTimeout(() => {
-          const https = require('https');
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // Accept self-signed cert
-          const req = https.get(`https://127.0.0.1:${HTTPS_PORT}/test`, (res) => {
-            console.log('✅ HTTPS self-test successful');
-          });
-          req.on('error', (err) => {
-            console.error('❌ HTTPS self-test failed:', err.message);
-          });
-        }, 500);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`✅ Reading Tracker HTTPS server running on https://127.0.0.1:${HTTPS_PORT}`);
+        }
       });
       
       httpsServer.on('error', (err) => {
@@ -1407,8 +1301,9 @@ function initApiServer() {
       });
       
     } else {
-      console.log('⚠️  SSL certificates not found, HTTPS server not started');
-      console.log('   For mixed content support, run: openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('⚠️  SSL certificates not found, HTTPS server not started');
+      }
     }
     
   } catch (error) {
@@ -1417,9 +1312,11 @@ function initApiServer() {
 }
 
 // Article Library Viewer Window
+/**
+ * Show the article library window with saved articles
+ */
 function showArticleLibrary() {
   try {
-    console.log('Opening article library...');
     
     const win = new BrowserWindow({
       width: 900,
@@ -1750,20 +1647,22 @@ function showArticleLibrary() {
       win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
     });
 
-    win.on('closed', () => {
-      console.log('Article library window closed');
-    });
+    win.on('closed', () => {});
 
   } catch (error) {
     console.error('Error opening article library:', error);
   }
 }
 
-// Normal Electron app mode only 
+// Application initialization
 app.whenReady().then(() => {
-  console.log('App ready, initializing components...');
-  initDatabase();
-  createTray();
+  initDatabase(() => {
+    createTray();
+    // Initialize API server for Safari extension
+    if (process.env.ENABLE_API_SERVER !== 'false') {
+      initApiServer();
+    }
+  });
 });
 
 // Only add Electron event handlers if not in server mode
