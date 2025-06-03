@@ -19,12 +19,46 @@ const {
   getStoryTags,
   generateArchiveSubmissionUrl,
   generateArchiveDirectUrl,
+  saveArchiveUrl,
   searchStoriesByTags
 } = require('./database');
 const { promptForCustomTag, showArticleLibrary, promptForTagSearch, showDatabaseBrowser, showArticleBrowser } = require('./ui');
+const { showTagSuggestionWindow, generateTagSuggestions } = require('./claude-integration');
 
 let tray = null;
 let currentSearchQuery = '';
+
+/**
+ * Automatically generate and apply AI tags for a story
+ */
+async function autoGenerateAndApplyTags(storyId, title, url, source) {
+  try {
+    console.log(`🤖 Auto-generating tags for: ${title}`);
+    const result = await generateTagSuggestions(title, url);
+    
+    if (result.success && result.tags.length > 0) {
+      // Apply all suggested tags automatically
+      const { addTagToStory, trackEngagement } = require('./database');
+      
+      result.tags.forEach(tag => {
+        addTagToStory(storyId, tag);
+        console.log(`🏷️ Auto-applied tag: ${tag}`);
+      });
+      
+      // Track engagement for AI tagging
+      trackEngagement(storyId, source);
+      
+      console.log(`✅ Auto-applied ${result.tags.length} AI tags [${result.source}]: ${result.tags.join(', ')}`);
+      
+      // Refresh menu to show new tags
+      setTimeout(updateMenu, 100);
+    } else {
+      console.log('❌ No AI tags generated');
+    }
+  } catch (error) {
+    console.error('Error in auto-tagging:', error);
+  }
+}
 
 /**
  * Create menu items for search results
@@ -39,70 +73,52 @@ function createSearchResultItems(searchResults) {
 
   return searchResults.map(story => ({
     label: `🔍 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title} [${story.tags.join(', ')}]`,
-    submenu: [
-      {
-        label: '🚀 Open Article + Archive',
-        click: () => {
-          console.log('Search result clicked:', story.title);
-          console.log('Story URL:', story.url);
-          
-          if (!story.url) {
-            console.error('Story has no URL:', story);
-            return;
-          }
-          
-          const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
-          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-          // For search results, comments URL might be stored or generated
-          let commentsUrl = story.comments_url;
-          if (!commentsUrl && story.url.includes('reddit.com')) {
-            commentsUrl = story.url;
-          } else if (!commentsUrl && typeof story.id === 'number') {
-            commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
-          }
-          trackArticleClick(story.id, 'search');
-          
-          // 1. Open archive.ph submission URL (triggers archiving)
-          shell.openExternal(archiveSubmissionUrl);
-          
-          // 2. Open direct archive.ph link
-          setTimeout(() => {
-            shell.openExternal(archiveDirectUrl);
-          }, 200);
-          
-          // 3. Open the original article
-          setTimeout(() => {
-            shell.openExternal(story.url);
-          }, 400);
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '🏷️ Add Tag',
-        submenu: [
-          {
-            label: '✏️ Custom Tag...',
-            click: () => {
-              promptForCustomTag(story.id, story.title);
-            }
-          }
-        ]
-      },
-      { type: 'separator' },
-      {
-        label: '🔗 Open Original',
-        click: () => {
-          shell.openExternal(story.url);
-        }
-      },
-      {
-        label: '📚 Open Archive',
-        click: () => {
-          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-          shell.openExternal(archiveDirectUrl);
-        }
+    click: () => {
+      console.log('Search result clicked:', story.title);
+      console.log('Story URL:', story.url);
+      
+      if (!story.url) {
+        console.error('Story has no URL:', story);
+        return;
       }
-    ]
+      
+      const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
+      const archiveDirectUrl = generateArchiveDirectUrl(story.url);
+      // For search results, comments URL might be stored or generated
+      let commentsUrl = story.comments_url;
+      if (!commentsUrl && story.url.includes('reddit.com')) {
+        commentsUrl = story.url;
+      } else if (!commentsUrl && typeof story.id === 'number') {
+        commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+      }
+      trackArticleClick(story.id, 'search');
+      
+      // Auto-generate and apply AI tags when link is clicked
+      autoGenerateAndApplyTags(story.id, story.title, story.url, 'search');
+      
+      // Save archive URLs to database
+      saveArchiveUrl(story.id, story.url, archiveDirectUrl, 'search');
+      
+      // 1. Open archive.ph submission URL (triggers archiving)
+      shell.openExternal(archiveSubmissionUrl);
+      
+      // 2. Open direct archive.ph link
+      setTimeout(() => {
+        shell.openExternal(archiveDirectUrl);
+      }, 200);
+      
+      // 3. Open comments if available
+      if (commentsUrl && commentsUrl !== story.url) {
+        setTimeout(() => {
+          shell.openExternal(commentsUrl);
+        }, 400);
+      }
+      
+      // 4. Open the original article LAST (becomes active tab)
+      setTimeout(() => {
+        shell.openExternal(story.url);
+      }, 600);
+    }
   }));
 }
 
@@ -148,10 +164,10 @@ async function updateMenu() {
   const allRedditStories = await fetchRedditStories();
   const allPinboardStories = await fetchPinboardPopular();
   
-  // Increased story limits for more content
-  const stories = allStories.slice(0, 16); // Top 16 HN stories (doubled)
-  const redditStories = allRedditStories.slice(0, 12); // Top 12 Reddit stories (doubled)
-  const pinboardStories = allPinboardStories.slice(0, 5); // Top 5 Pinboard stories (+2)
+  // Story distribution optimized for menu length
+  const stories = allStories.slice(0, 12); // Top 12 HN stories
+  const redditStories = allRedditStories.slice(0, 14); // Top 14 Reddit stories
+  const pinboardStories = allPinboardStories.slice(0, 11); // Top 11 Pinboard stories
   
   console.log('Limited stories for menu:', stories.length, 'HN,', redditStories.length, 'Reddit,', pinboardStories.length, 'Pinboard');
   console.log('Total fetched:', allStories.length, 'HN,', allRedditStories.length, 'Reddit,', allPinboardStories.length, 'Pinboard');
@@ -213,96 +229,48 @@ async function updateMenu() {
     console.log(`Creating HN story item ${index}:`, story.title);
     return {
       label: `🟠 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
-      submenu: [
-        {
-          label: story.url ? '🚀 Open Article + Archive + Discussion' : '💬 Open HN Discussion',
-          click: () => {
-            console.log('HN story clicked:', story.title);
-            const hnDiscussionUrl = `https://news.ycombinator.com/item?id=${story.id}`;
-            trackArticleClick(story.id, 'hn');
-            
-            if (story.url) {
-              // External link: Open article + archive + discussion
-              const articleUrl = story.url;
-              console.log('HN story URL:', articleUrl);
-              
-              const archiveSubmissionUrl = generateArchiveSubmissionUrl(articleUrl);
-              const archiveDirectUrl = generateArchiveDirectUrl(articleUrl);
-              
-              // 1. Open archive.ph submission URL (triggers archiving)
-              shell.openExternal(archiveSubmissionUrl);
-              
-              // 2. Open direct archive.ph link
-              setTimeout(() => {
-                shell.openExternal(archiveDirectUrl);
-              }, 200);
-              
-              // 3. Open HN discussion
-              setTimeout(() => {
-                shell.openExternal(hnDiscussionUrl);
-              }, 400);
-              
-              // 4. Open the original article LAST (becomes active tab)
-              setTimeout(() => {
-                shell.openExternal(articleUrl);
-              }, 600);
-            } else {
-              // Self post: Just open HN discussion
-              console.log('HN self post, opening discussion:', hnDiscussionUrl);
-              shell.openExternal(hnDiscussionUrl);
-            }
-          }
-        },
-        { type: 'separator' },
-        {
-          label: '🏷️ Add Tag',
-          submenu: [
-            {
-              label: '✏️ Custom Tag...',
-              click: () => {
-                promptForCustomTag(story.id, story.title);
-              }
-            },
-            { type: 'separator' },
-            { label: 'Available Tags:', enabled: false },
-            { type: 'separator' },
-            ...availableTags.map(tag => ({
-              label: tag,
-              click: () => {
-                trackEngagement(story.id, 'hn'); // Track engagement when user tags
-                addTagToStory(story.id, tag);
-                setTimeout(updateMenu, 100);
-              }
-            }))
-          ]
-        },
-        { type: 'separator' },
-        ...(story.url ? [
-          {
-            label: '🔗 Open Original Article',
-            click: () => {
-              trackArticleClick(story.id, 'hn');
-              shell.openExternal(story.url);
-            }
-          },
-          {
-            label: '📚 Open Archive',
-            click: () => {
-              trackArchiveClick(story.id, 'hn');
-              const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-              shell.openExternal(archiveDirectUrl);
-            }
-          }
-        ] : []),
-        {
-          label: '💬 Open HN Discussion',
-          click: () => {
-            trackCommentsClick(story.id, 'hn');
-            const hnDiscussionUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+      click: () => {
+        console.log('HN story clicked:', story.title);
+        const hnDiscussionUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+        trackArticleClick(story.id, 'hn');
+        
+        // Auto-generate and apply AI tags when link is clicked
+        autoGenerateAndApplyTags(story.id, story.title, story.url, 'hn');
+        
+        if (story.url) {
+          // External link: Open archive + discussion + article (in that order)
+          const articleUrl = story.url;
+          console.log('HN story URL:', articleUrl);
+          
+          const archiveSubmissionUrl = generateArchiveSubmissionUrl(articleUrl);
+          const archiveDirectUrl = generateArchiveDirectUrl(articleUrl);
+          
+          // Save archive URLs to database
+          saveArchiveUrl(story.id, articleUrl, archiveDirectUrl, 'hn');
+          
+          // 1. Open archive.ph submission URL (triggers archiving)
+          shell.openExternal(archiveSubmissionUrl);
+          
+          // 2. Open direct archive.ph link
+          setTimeout(() => {
+            shell.openExternal(archiveDirectUrl);
+          }, 200);
+          
+          // 3. Open HN discussion
+          setTimeout(() => {
             shell.openExternal(hnDiscussionUrl);
-          }
+          }, 400);
+          
+          // 4. Open the original article LAST (becomes active tab)
+          setTimeout(() => {
+            shell.openExternal(articleUrl);
+          }, 600);
+        } else {
+          // Self post: Just open HN discussion
+          console.log('HN self post, opening discussion:', hnDiscussionUrl);
+          shell.openExternal(hnDiscussionUrl);
         }
-      ]
+      }
     };
   });
   
@@ -318,92 +286,39 @@ async function updateMenu() {
   
   const redditStoryItems = redditStories.map(story => ({
     label: `👽 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
-    submenu: [
-      {
-        label: '🚀 Open Article + Archive + Discussion',
-        click: () => {
-          console.log('Reddit story clicked:', story.title);
-          // For Reddit: open archive + actual content + Reddit discussion
-          const targetUrl = story.is_self ? story.url : story.actual_url;
-          const redditCommentsUrl = story.url; // Reddit discussion URL
-          const archiveSubmissionUrl = generateArchiveSubmissionUrl(targetUrl);
-          const archiveDirectUrl = generateArchiveDirectUrl(targetUrl);
-          trackArticleClick(story.id, 'reddit');
-          
-          // 1. Open archive.ph submission URL (triggers archiving)
-          shell.openExternal(archiveSubmissionUrl);
-          
-          // 2. Open direct archive.ph link
-          setTimeout(() => {
-            shell.openExternal(archiveDirectUrl);
-          }, 200);
-          
-          // 3. Open Reddit discussion page
-          setTimeout(() => {
-            shell.openExternal(story.url); // This is always the Reddit discussion URL
-          }, 400);
-          
-          // 4. Open the actual article content LAST (becomes active tab)
-          setTimeout(() => {
-            shell.openExternal(targetUrl);
-          }, 600);
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '🏷️ Add Tag',
-        submenu: [
-          {
-            label: '✏️ Custom Tag...',
-            click: () => {
-              promptForCustomTag(story.id, story.title);
-            }
-          },
-          { type: 'separator' },
-          { label: 'Available Tags:', enabled: false },
-          { type: 'separator' },
-          ...availableTags.map(tag => ({
-            label: tag,
-            click: () => {
-              trackEngagement(story.id, 'reddit'); // Track engagement when user tags
-              addTagToStory(story.id, tag);
-              setTimeout(updateMenu, 100);
-            }
-          })),
-          { type: 'separator' },
-          {
-            label: 'reddit',
-            click: () => {
-              trackEngagement(story.id, 'reddit'); // Track engagement when user tags
-              addTagToStory(story.id, 'reddit');
-              setTimeout(updateMenu, 100);
-            }
-          }
-        ]
-      },
-      { type: 'separator' },
-      {
-        label: '🔗 Open Article Only',
-        click: () => {
-          const targetUrl = story.is_self ? story.url : story.actual_url;
-          shell.openExternal(targetUrl);
-        }
-      },
-      {
-        label: '💬 Open Reddit Discussion',
-        click: () => {
-          shell.openExternal(story.url);
-        }
-      },
-      {
-        label: '📚 Open Archive',
-        click: () => {
-          const targetUrl = story.is_self ? story.url : story.actual_url;
-          const archiveDirectUrl = generateArchiveDirectUrl(targetUrl);
-          shell.openExternal(archiveDirectUrl);
-        }
-      }
-    ]
+    click: () => {
+      console.log('Reddit story clicked:', story.title);
+      // For Reddit: open archive + actual content + Reddit discussion (in that order)
+      const targetUrl = story.is_self ? story.url : story.actual_url;
+      const redditCommentsUrl = story.url; // Reddit discussion URL
+      const archiveSubmissionUrl = generateArchiveSubmissionUrl(targetUrl);
+      const archiveDirectUrl = generateArchiveDirectUrl(targetUrl);
+      trackArticleClick(story.id, 'reddit');
+      
+      // Auto-generate and apply AI tags when link is clicked
+      autoGenerateAndApplyTags(story.id, story.title, targetUrl, 'reddit');
+      
+      // Save archive URLs to database
+      saveArchiveUrl(story.id, targetUrl, archiveDirectUrl, 'reddit');
+      
+      // 1. Open archive.ph submission URL (triggers archiving)
+      shell.openExternal(archiveSubmissionUrl);
+      
+      // 2. Open direct archive.ph link
+      setTimeout(() => {
+        shell.openExternal(archiveDirectUrl);
+      }, 200);
+      
+      // 3. Open Reddit discussion page
+      setTimeout(() => {
+        shell.openExternal(story.url); // This is always the Reddit discussion URL
+      }, 400);
+      
+      // 4. Open the actual article content LAST (becomes active tab)
+      setTimeout(() => {
+        shell.openExternal(targetUrl);
+      }, 600);
+    }
   }));
   
   menuTemplate.push(...redditStoryItems);
@@ -418,77 +333,32 @@ async function updateMenu() {
   
   const pinboardStoryItems = pinboardStories.map(story => ({
     label: `📌 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
-    submenu: [
-      {
-        label: '🚀 Open Article + Archive',
-        click: () => {
-          console.log('Pinboard story clicked:', story.title);
-          // For Pinboard: open archive + article (no discussion)
-          const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
-          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-          trackArticleClick(story.id, 'pinboard');
-          
-          // 1. Open archive.ph submission URL (triggers archiving)
-          shell.openExternal(archiveSubmissionUrl);
-          
-          // 2. Open direct archive.ph link
-          setTimeout(() => {
-            shell.openExternal(archiveDirectUrl);
-          }, 200);
-          
-          // 3. Open the original article LAST (becomes active tab)
-          setTimeout(() => {
-            shell.openExternal(story.url);
-          }, 400);
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '🏷️ Add Tag',
-        submenu: [
-          {
-            label: '✏️ Custom Tag...',
-            click: () => {
-              promptForCustomTag(story.id, story.title);
-            }
-          },
-          { type: 'separator' },
-          { label: 'Available Tags:', enabled: false },
-          { type: 'separator' },
-          ...availableTags.map(tag => ({
-            label: tag,
-            click: () => {
-              trackEngagement(story.id, 'pinboard'); // Track engagement when user tags
-              addTagToStory(story.id, tag);
-              setTimeout(updateMenu, 100);
-            }
-          })),
-          { type: 'separator' },
-          {
-            label: 'pinboard',
-            click: () => {
-              trackEngagement(story.id, 'pinboard'); // Track engagement when user tags
-              addTagToStory(story.id, 'pinboard');
-              setTimeout(updateMenu, 100);
-            }
-          }
-        ]
-      },
-      { type: 'separator' },
-      {
-        label: '🔗 Open Original',
-        click: () => {
-          shell.openExternal(story.url);
-        }
-      },
-      {
-        label: '📚 Open Archive',
-        click: () => {
-          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
-          shell.openExternal(archiveDirectUrl);
-        }
-      }
-    ]
+    click: () => {
+      console.log('Pinboard story clicked:', story.title);
+      // For Pinboard: open archive + article (no discussion)
+      const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
+      const archiveDirectUrl = generateArchiveDirectUrl(story.url);
+      trackArticleClick(story.id, 'pinboard');
+      
+      // Auto-generate and apply AI tags when link is clicked
+      autoGenerateAndApplyTags(story.id, story.title, story.url, 'pinboard');
+      
+      // Save archive URLs to database
+      saveArchiveUrl(story.id, story.url, archiveDirectUrl, 'pinboard');
+      
+      // 1. Open archive.ph submission URL (triggers archiving)
+      shell.openExternal(archiveSubmissionUrl);
+      
+      // 2. Open direct archive.ph link
+      setTimeout(() => {
+        shell.openExternal(archiveDirectUrl);
+      }, 200);
+      
+      // 3. Open the original article LAST (becomes active tab)
+      setTimeout(() => {
+        shell.openExternal(story.url);
+      }, 400);
+    }
   }));
   
   menuTemplate.push(...pinboardStoryItems);

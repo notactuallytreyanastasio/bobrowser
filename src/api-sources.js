@@ -280,7 +280,7 @@ async function fetchPinboardPopular() {
 async function fetchHNStories() {
   try {
     const topStoriesResponse = await axios.get('https://hacker-news.firebaseio.com/v0/topstories.json');
-    const topStoryIds = topStoriesResponse.data.slice(0, 10);
+    const topStoryIds = topStoriesResponse.data.slice(0, 20); // Fetch 20 to ensure we have enough
     
     const stories = await Promise.all(
       topStoryIds.map(async (id) => {

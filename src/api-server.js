@@ -214,7 +214,7 @@ function initApiServer() {
     FROM links l 
     WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') = 0
     ORDER BY l.times_appeared ASC, RANDOM()
-    LIMIT 10`, [], (err, rows) => {
+    LIMIT 100`, [], (err, rows) => {
       if (err) {
         res.status(500).json({ error: err.message });
       } else {
@@ -238,7 +238,7 @@ function initApiServer() {
     FROM links l 
     WHERE l.viewed = 0 OR l.viewed IS NULL
     ORDER BY RANDOM()
-    LIMIT 10`, [], (err, rows) => {
+    LIMIT 100`, [], (err, rows) => {
       if (err) {
         res.status(500).json({ error: err.message });
       } else {
@@ -263,7 +263,7 @@ function initApiServer() {
     FROM links l 
     WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') > 0
     ORDER BY last_clicked DESC
-    LIMIT 10`, [], (err, rows) => {
+    LIMIT 100`, [], (err, rows) => {
       if (err) {
         res.status(500).json({ error: err.message });
       } else {
@@ -286,7 +286,7 @@ function initApiServer() {
       (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
     FROM links l 
     ORDER BY l.last_seen_at DESC
-    LIMIT 50`, [], (err, rows) => {
+    LIMIT 100`, [], (err, rows) => {
       if (err) {
         res.status(500).json({ error: err.message });
       } else {
@@ -520,150 +520,6 @@ function initApiServer() {
     `);
   });
 
-  // Simple browser interface
-  server.get('/browser', (req, res) => {
-    res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Article Browser</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .article {
-            background: white;
-            margin: 10px 0;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .article-title {
-            color: #0066cc;
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 16px;
-            line-height: 1.4;
-        }
-        .article-title:hover {
-            text-decoration: underline;
-        }
-        .article-meta {
-            color: #666;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        .domain {
-            color: #888;
-            font-size: 11px;
-        }
-        .click-count {
-            background: #e3f2fd;
-            color: #1976d2;
-            padding: 2px 6px;
-            border-radius: 10px;
-            font-size: 10px;
-            font-weight: bold;
-            margin-left: 8px;
-        }
-        .search-box {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        h1 {
-            color: #333;
-            text-align: center;
-        }
-        .loading {
-            text-align: center;
-            color: #666;
-        }
-    </style>
-</head>
-<body>
-    <h1>📚 Article Browser</h1>
-    <input type="text" id="searchBox" class="search-box" placeholder="Search articles...">
-    <div id="articles" class="loading">Loading articles...</div>
-
-    <script>
-        let articles = [];
-
-        function formatDate(dateString) {
-            return new Date(dateString).toLocaleDateString();
-        }
-
-        function trackClick(articleId, url) {
-            fetch(\`/api/articles/\${articleId}/click\`, { method: 'POST' })
-                .catch(err => console.error('Error tracking click:', err));
-            window.open(url, '_blank');
-        }
-
-        function renderArticles(articlesToShow = articles) {
-            const container = document.getElementById('articles');
-            if (articlesToShow.length === 0) {
-                container.innerHTML = '<div class="loading">No articles found</div>';
-                return;
-            }
-
-            container.innerHTML = articlesToShow.map(article => \`
-                <div class="article">
-                    <a href="#" class="article-title" onclick="trackClick(\${article.id}, '\${article.url}'); return false;">
-                        \${article.title}
-                    </a>
-                    <div class="article-meta">
-                        <span class="domain">\${article.domain || new URL(article.url).hostname}</span>
-                        \${article.click_count > 0 ? \`<span class="click-count">\${article.click_count} clicks</span>\` : ''}
-                        <span style="margin-left: 8px;">Saved: \${formatDate(article.saved_at)}</span>
-                    </div>
-                </div>
-            \`).join('');
-        }
-
-        function searchArticles(query) {
-            if (!query.trim()) {
-                renderArticles();
-                return;
-            }
-
-            const filtered = articles.filter(article => 
-                article.title.toLowerCase().includes(query.toLowerCase()) ||
-                (article.domain && article.domain.toLowerCase().includes(query.toLowerCase()))
-            );
-            renderArticles(filtered);
-        }
-
-        // Load articles
-        fetch('/api/articles')
-            .then(response => response.json())
-            .then(data => {
-                articles = data.articles;
-                renderArticles();
-            })
-            .catch(err => {
-                console.error('Error loading articles:', err);
-                document.getElementById('articles').innerHTML = '<div class="loading">Error loading articles</div>';
-            });
-
-        // Search functionality
-        document.getElementById('searchBox').addEventListener('input', (e) => {
-            searchArticles(e.target.value);
-        });
-    </script>
-</body>
-</html>
-    `);
-  });
-  
   // Note: Reading library functionality removed, will be revisited
   
   // Analytics functionality removed

@@ -11,7 +11,7 @@ const HTTPS_PORT = parseInt(process.env.HTTPS_PORT) || 3003;
 const USER_AGENT = process.env.USER_AGENT || 'Reading-Tracker/1.0';
 const DEFAULT_SUBREDDITS = process.env.REDDIT_SUBREDDITS ? 
   process.env.REDDIT_SUBREDDITS.split(',') : 
-  ['news', 'television', 'elixir', 'aitah', 'bestofredditorupdates', 'explainlikeimfive'];
+  ['news', 'television', 'elixir', 'aitah', 'bestofredditorupdates', 'explainlikeimfive', 'technology', 'askreddit', 'gadgets', 'gaming'];
 
 module.exports = {
   CACHE_DURATION,

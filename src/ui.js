@@ -666,94 +666,96 @@ function showDatabaseBrowser() {
         <title>🗄️ Database Browser</title>
         <style>
           body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-family: system-ui, sans-serif;
             margin: 0; 
-            padding: 20px; 
-            background: #f5f5f5;
-            font-size: 14px;
-          }
-          .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            text-align: center;
-          }
-          .header h1 {
-            margin: 0 0 15px 0;
-            font-size: 28px;
-            font-weight: 300;
+            padding: 8px; 
+            background: #fff;
+            font-size: 12px;
           }
           .controls {
             display: flex;
-            gap: 15px;
-            justify-content: center;
-            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 8px;
+            padding: 8px;
+            background: #f5f5f5;
+            border-radius: 4px;
+          }
+          .filters {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+            padding: 6px 8px;
+            background: #f0f0f0;
+            border-radius: 4px;
           }
           .btn {
-            background: rgba(255,255,255,0.2);
+            background: #007acc;
             color: white;
-            border: 2px solid rgba(255,255,255,0.3);
-            padding: 12px 24px;
-            border-radius: 8px;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 11px;
             font-weight: 500;
-            transition: all 0.2s ease;
-            min-width: 120px;
           }
           .btn:hover {
-            background: rgba(255,255,255,0.3);
-            border-color: rgba(255,255,255,0.5);
-            transform: translateY(-1px);
+            background: #005fa3;
           }
           .btn.active {
-            background: rgba(255,255,255,0.4);
-            border-color: rgba(255,255,255,0.6);
+            background: #003d6b;
           }
-          .content {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            overflow: hidden;
-            margin-top: 20px;
+          .filter-btn {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 9px;
+            font-weight: 500;
+            text-transform: uppercase;
+          }
+          .filter-btn:hover {
+            background: #555;
+          }
+          .filter-btn.active {
+            background: #333;
           }
           .loading {
-            padding: 40px;
-            text-align: center;
+            padding: 20px;
+            text-align: left;
             color: #666;
-            font-size: 16px;
+            font-size: 12px;
           }
           table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 11px;
           }
           th {
-            background: #f8f9fa;
-            padding: 15px;
+            background: #f0f0f0;
+            padding: 6px 8px;
             text-align: left;
             font-weight: 600;
             color: #333;
-            border-bottom: 2px solid #e9ecef;
-            font-size: 13px;
+            border-bottom: 1px solid #ddd;
+            font-size: 10px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
           }
           td {
-            padding: 12px 15px;
-            border-bottom: 1px solid #e9ecef;
+            padding: 4px 8px;
+            border-bottom: 1px solid #eee;
             vertical-align: top;
+            text-align: left;
           }
           tr:hover {
-            background-color: #f8f9fa;
+            background-color: #f9f9f9;
           }
           .title-link {
             color: #0066cc;
             text-decoration: none;
             font-weight: 500;
-            display: block;
-            margin-bottom: 4px;
+            display: inline;
           }
           .title-link:hover {
             text-decoration: underline;
@@ -767,16 +769,18 @@ function showDatabaseBrowser() {
           .comments-link {
             color: #888;
             text-decoration: none;
-            font-size: 12px;
+            font-size: 10px;
+            margin-left: 6px;
+            display: inline;
           }
           .comments-link:hover {
             text-decoration: underline;
           }
           .source-badge {
             display: inline-block;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 11px;
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-size: 9px;
             font-weight: bold;
             text-transform: uppercase;
             color: white;
@@ -786,52 +790,54 @@ function showDatabaseBrowser() {
           .source-pinboard { background: #0066cc; }
           .source-unknown { background: #666; }
           .meta {
-            font-size: 12px;
+            font-size: 10px;
             color: #666;
           }
           .stats {
             display: flex;
-            gap: 10px;
-            font-size: 11px;
+            gap: 4px;
+            font-size: 9px;
+            flex-wrap: wrap;
           }
           .stat {
             background: #e3f2fd;
             color: #1976d2;
-            padding: 2px 6px;
-            border-radius: 3px;
+            padding: 1px 3px;
+            border-radius: 2px;
             font-weight: 500;
           }
           .empty-state {
-            padding: 60px 20px;
-            text-align: center;
+            padding: 30px;
+            text-align: left;
             color: #666;
-          }
-          .empty-state h3 {
-            font-size: 20px;
-            margin-bottom: 8px;
-            font-weight: 300;
+            font-size: 12px;
           }
         </style>
       </head>
       <body>
-        <div class="header">
-          <h1>🗄️ Database Browser</h1>
-          <div class="controls">
-            <button class="btn" onclick="loadBagOfLinks()">💎 Bag of Links</button>
-            <button class="btn" onclick="loadUnread()">📖 Unread</button>
-            <button class="btn" onclick="loadRecent()">🕒 Recent</button>
-            <button class="btn" onclick="loadAll()">📋 All Links</button>
-          </div>
+        <div class="controls">
+          <button class="btn" onclick="loadBagOfLinks()">💎 Gems</button>
+          <button class="btn" onclick="loadUnread()">📖 Unread</button>
+          <button class="btn" onclick="loadRecent()">🕒 Recent</button>
+          <button class="btn" onclick="loadAll()">📋 All</button>
         </div>
         
-        <div class="content">
-          <div id="results" class="loading">
-            Click a button above to browse your links
-          </div>
+        <div class="filters">
+          <button class="filter-btn" onclick="filterByDays(1)">1 DAY</button>
+          <button class="filter-btn" onclick="filterByDays(7)">1 WEEK</button>
+          <button class="filter-btn" onclick="filterByDays(30)">1 MONTH</button>
+          <button class="filter-btn active" onclick="clearFilters()">ALL TIME</button>
+        </div>
+        
+        <div id="results" class="loading">
+          Click a button to browse links
         </div>
 
         <script>
           const { shell } = require('electron');
+          
+          let currentLinks = []; // Store current results for filtering
+          let currentTitle = ''; // Store current result set title
           
           function openLink(url) {
             if (url) {
@@ -865,11 +871,14 @@ function showDatabaseBrowser() {
           function renderResults(links, title) {
             const resultsDiv = document.getElementById('results');
             
+            // Store current results for filtering
+            currentLinks = links;
+            currentTitle = title;
+            
             if (links.length === 0) {
               resultsDiv.innerHTML = \`
                 <div class="empty-state">
-                  <h3>No links found</h3>
-                  <p>\${title} returned no results</p>
+                  No \${title.toLowerCase()} found
                 </div>
               \`;
               return;
@@ -968,6 +977,102 @@ function showDatabaseBrowser() {
             showLoading();
             const links = await fetchData('/api/database/all');
             renderResults(links, 'All Links');
+          }
+          
+          function setActiveFilter(activeBtn) {
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+              btn.classList.remove('active');
+            });
+            activeBtn.classList.add('active');
+          }
+          
+          function filterByDays(days) {
+            setActiveFilter(event.target);
+            
+            if (currentLinks.length === 0) {
+              return; // No data to filter
+            }
+            
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - days);
+            
+            const filteredLinks = currentLinks.filter(link => {
+              // Use last_seen_at as the primary date, fallback to first_seen_at
+              const linkDate = new Date(link.last_seen_at || link.first_seen_at || 0);
+              return linkDate >= cutoffDate;
+            });
+            
+            renderFilteredResults(filteredLinks, \`\${currentTitle} (last \${days} day\${days > 1 ? 's' : ''})\`);
+          }
+          
+          function clearFilters() {
+            setActiveFilter(event.target);
+            
+            if (currentLinks.length === 0) {
+              return; // No data to restore
+            }
+            
+            renderFilteredResults(currentLinks, currentTitle);
+          }
+          
+          function renderFilteredResults(links, title) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (links.length === 0) {
+              resultsDiv.innerHTML = \`
+                <div class="empty-state">
+                  No \${title.toLowerCase()} found
+                </div>
+              \`;
+              return;
+            }
+            
+            const tableHtml = \`
+              <table>
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Source</th>
+                    <th>Stats</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  \${links.map(link => {
+                    const sourceClass = 'source-' + (link.source || 'unknown');
+                    const titleClass = link.viewed ? 'viewed' : (link.engaged ? 'engaged' : '');
+                    const hasComments = link.comments_url && link.comments_url !== link.url;
+                    
+                    return \`
+                      <tr>
+                        <td>
+                          <a href="#" onclick="openLink('\${link.url}')" class="title-link \${titleClass}">
+                            \${truncateTitle(link.title)}
+                          </a>
+                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}')" class="comments-link">[comments]</a>\` : ''}
+                        </td>
+                        <td>
+                          <span class="source-badge \${sourceClass}">\${link.source || 'unknown'}</span>
+                        </td>
+                        <td>
+                          <div class="stats">
+                            \${link.total_clicks > 0 ? \`<span class="stat">\${link.total_clicks} clicks</span>\` : ''}
+                            \${link.engagement_count > 0 ? \`<span class="stat">\${link.engagement_count} engaged</span>\` : ''}
+                            \${link.times_appeared > 1 ? \`<span class="stat">seen \${link.times_appeared}x</span>\` : ''}
+                            \${link.points ? \`<span class="stat">\${link.points} pts</span>\` : ''}
+                          </div>
+                        </td>
+                        <td>
+                          <div class="meta">\${formatDate(link.last_seen_at)}</div>
+                        </td>
+                      </tr>
+                    \`;
+                  }).join('')}
+                </tbody>
+              </table>
+            \`;
+            
+            resultsDiv.innerHTML = tableHtml;
           }
         </script>
       </body>

@@ -196,6 +196,33 @@ function generateArchiveDirectUrl(originalUrl) {
 }
 
 /**
+ * Save archive URL to database for a story
+ */
+function saveArchiveUrl(storyId, originalUrl, archiveUrl, source) {
+  if (!db) return;
+  
+  console.log(`💾 SAVING ARCHIVE URL: Story ${storyId} [${source}] -> ${archiveUrl}`);
+  
+  // Update the links table with archive URL
+  db.run(`UPDATE links SET archive_url = ? WHERE story_id = ? AND source = ?`, 
+    [archiveUrl, storyId, source], (err) => {
+      if (err) {
+        console.error('Error saving archive URL to links:', err);
+      } else {
+        console.log(`✅ Archive URL saved for story ${storyId}`);
+      }
+    });
+    
+  // Also save to clicks table for this specific click
+  db.run(`UPDATE clicks SET archive_url = ? WHERE story_id = ? ORDER BY clicked_at DESC LIMIT 1`, 
+    [archiveUrl, storyId], (err) => {
+      if (err) {
+        console.error('Error saving archive URL to clicks:', err);
+      }
+    });
+}
+
+/**
  * Track when a story appears in the menu - adds to links table
  */
 function trackLinkAppearance(story, source) {
@@ -242,7 +269,6 @@ function trackLinkAppearance(story, source) {
     
     if (row) {
       // Link exists, update it
-      console.log(`📝 UPDATING EXISTING LINK: ID ${row.id}, Previous appearances: ${row.times_appeared}, New appearance count: ${row.times_appeared + 1}`);
       db.run(`UPDATE links SET 
         title = ?, 
         points = ?, 
@@ -254,8 +280,6 @@ function trackLinkAppearance(story, source) {
         [story.title || 'Untitled', story.points, story.comments, commentsUrl, row.id], (updateErr) => {
           if (updateErr) {
             console.error('Error updating link:', updateErr);
-          } else {
-            console.log(`✅ LINK UPDATED SUCCESSFULLY: ID ${row.id}`);
           }
         });
     } else {
@@ -762,6 +786,7 @@ module.exports = {
   initDatabase,
   generateArchiveSubmissionUrl,
   generateArchiveDirectUrl,
+  saveArchiveUrl,
   trackStoryAppearance,
   trackLinkAppearance,
   trackEngagement,
