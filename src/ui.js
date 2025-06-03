@@ -3,7 +3,7 @@
  */
 
 const { BrowserWindow, shell } = require('electron');
-const { addTagToStory, getArticles, trackArticleClick, getDatabase } = require('./database');
+const { addTagToStory, getArticles, trackSavedArticleClick, getDatabase } = require('./database');
 
 /**
  * Show custom tag input dialog
@@ -132,6 +132,15 @@ function promptForCustomTag(storyId, storyTitle) {
   const { ipcMain } = require('electron');
   ipcMain.removeAllListeners('add-custom-tag'); // Remove previous listeners
   ipcMain.on('add-custom-tag', (event, storyId, tag) => {
+    // Track engagement when user adds custom tag
+    const { trackEngagement } = require('./database');
+    let source = 'unknown';
+    // Try to determine source - this is a best guess
+    if (storyTitle && storyTitle.includes('reddit')) source = 'reddit';
+    else if (typeof storyId === 'number') source = 'hn';
+    else source = 'pinboard';
+    
+    trackEngagement(storyId, source);
     addTagToStory(storyId, tag);
     tagInputWindow.close();
     // Refresh the menu after adding the tag
@@ -649,21 +658,74 @@ function showDatabaseBrowser() {
       return;
     }
 
-    // Get the click data first, then load the page
+    // Get ALL links from the database, fallback to old clicks table if links is empty
     console.log('Executing database query...');
-    db.all(`SELECT 
-      c.id,
-      c.story_id,
-      c.title,
-      c.url,
-      c.comments_url,
-      c.points,
-      c.comments,
-      c.clicked_at,
-      c.story_added_at
-    FROM clicks c
-    ORDER BY c.clicked_at DESC 
-    LIMIT 100`, [], (err, rows) => {
+    
+    // First check if links table has any data
+    db.get(`SELECT COUNT(*) as count FROM links`, [], (countErr, countResult) => {
+      if (countErr) {
+        console.error('Error checking links table:', countErr);
+        win.loadURL(`data:text/html,<h1>Database Error</h1><p>${countErr.message}</p>`);
+        return;
+      }
+      
+      const hasLinks = countResult && countResult.count > 0;
+      
+      if (hasLinks) {
+        // Use new links table
+        db.all(`SELECT 
+          l.id,
+          l.story_id,
+          l.title,
+          l.url,
+          l.comments_url,
+          l.source,
+          l.points,
+          l.comments,
+          l.viewed,
+          l.viewed_at,
+          l.engaged,
+          l.engaged_at,
+          l.engagement_count,
+          l.first_seen_at,
+          l.last_seen_at,
+          l.times_appeared,
+          l.tags,
+          (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
+          (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
+          (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+        FROM links l
+        ORDER BY l.last_seen_at DESC`, [], handleResults);
+      } else {
+        // Fallback to old clicks table
+        db.all(`SELECT 
+          c.id,
+          c.story_id,
+          c.title,
+          c.url,
+          c.comments_url,
+          'legacy' as source,
+          c.points,
+          c.comments,
+          0 as viewed,
+          NULL as viewed_at,
+          0 as engaged,
+          NULL as engaged_at,
+          0 as engagement_count,
+          c.clicked_at as first_seen_at,
+          c.clicked_at as last_seen_at,
+          1 as times_appeared,
+          c.tags,
+          1 as total_clicks,
+          1 as article_clicks,
+          0 as engagements
+        FROM clicks c
+        ORDER BY c.clicked_at DESC 
+        LIMIT 100`, [], handleResults);
+      }
+    });
+    
+    function handleResults(err, rows) {
       if (err) {
         console.error('Database query error:', err);
         win.loadURL(`data:text/html,<h1>Database Error</h1><p>${err.message}</p>`);
@@ -673,17 +735,35 @@ function showDatabaseBrowser() {
       console.log('Database Browser: Found', rows.length, 'click records');
 
       // Create compact clickable links
-      const clicksHtml = rows.map(click => {
-        const hasComments = click.comments_url && click.comments_url !== click.url;
+      const linksHtml = rows.map(link => {
+        const hasComments = link.comments_url && link.comments_url !== link.url;
+        const sourceEmoji = link.source === 'hn' ? '🟠' : link.source === 'reddit' ? '👽' : link.source === 'pinboard' ? '📌' : '🔗';
+        
+        // Determine link styling based on engagement and view status
+        let linkStyle = 'color: #0066cc; font-weight: bold;'; // Default: unviewed
+        if (link.viewed) {
+          linkStyle = 'color: #666;'; // Viewed: gray
+        } else if (link.engaged) {
+          linkStyle = 'color: #ff6b35; font-weight: bold;'; // Engaged but not viewed: orange
+        }
+        
+        // Create engagement indicator
+        const engagementInfo = [];
+        if (link.total_clicks > 0) engagementInfo.push(`${link.total_clicks} clicks`);
+        if (link.engagement_count > 0) engagementInfo.push(`${link.engagement_count} engaged`);
+        if (link.times_appeared > 1) engagementInfo.push(`seen ${link.times_appeared}x`);
+        
         return `
           <div style="margin-bottom: 4px; line-height: 1.3;">
-            <a href="#" onclick="openLink('${click.url}')" style="font-size: 12pt; color: #0066cc; text-decoration: none; margin-right: 8px;">
-              ${click.title || 'Untitled'}
+            ${sourceEmoji}
+            <a href="#" onclick="openLink('${link.url}')" style="font-size: 12pt; ${linkStyle} text-decoration: none; margin-right: 8px;">
+              ${link.title || 'Untitled'}
             </a>
-            ${hasComments ? `<a href="#" onclick="openLink('${click.comments_url}')" style="font-size: 10pt; color: #888; text-decoration: none;">[comments]</a>` : ''}
+            ${hasComments ? `<a href="#" onclick="openLink('${link.comments_url}')" style="font-size: 10pt; color: #888; text-decoration: none;">[comments]</a>` : ''}
             <span style="font-size: 10pt; color: #888; margin-left: 8px;">
-              ${click.clicked_at ? new Date(click.clicked_at).toLocaleDateString() : ''}
-              ${click.points ? ` • ${click.points}pts` : ''}
+              ${link.last_seen_at ? new Date(link.last_seen_at).toLocaleDateString() : ''}
+              ${link.points ? ` • ${link.points}pts` : ''}
+              ${engagementInfo.length > 0 ? ` • ${engagementInfo.join(', ')}` : ''}
             </span>
           </div>
         `;
@@ -706,7 +786,7 @@ function showDatabaseBrowser() {
           </style>
         </head>
         <body>
-          ${rows.length === 0 ? '<p>No clicks found</p>' : clicksHtml}
+          ${rows.length === 0 ? '<p>No links found</p>' : linksHtml}
           
           <script>
             const { shell } = require('electron');
@@ -722,7 +802,7 @@ function showDatabaseBrowser() {
 
       console.log('Loading database browser HTML...');
       win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
-    });
+    }
 
     win.on('closed', () => {
       console.log('Database browser window closed');

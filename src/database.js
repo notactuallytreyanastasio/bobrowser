@@ -43,6 +43,7 @@ function initDatabase(callback) {
   db = new sqlite3.Database(dbPath);
   
   db.serialize(() => {
+    // Legacy clicks table (keeping existing structure for migration)
     db.run(`CREATE TABLE IF NOT EXISTS clicks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       story_id INTEGER NOT NULL,
@@ -54,6 +55,7 @@ function initDatabase(callback) {
       clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
+    // Legacy stories table (keeping for migration)
     db.run(`CREATE TABLE IF NOT EXISTS stories (
       story_id INTEGER PRIMARY KEY,
       title TEXT NOT NULL,
@@ -129,6 +131,36 @@ function initDatabase(callback) {
     db.run(`ALTER TABLE clicks ADD COLUMN comments_url TEXT`, () => {});
     db.run(`ALTER TABLE stories ADD COLUMN comments_url TEXT`, () => {});
     
+    // Add new columns to existing clicks table for new schema
+    db.run(`ALTER TABLE clicks ADD COLUMN link_id INTEGER`, () => {});
+    db.run(`ALTER TABLE clicks ADD COLUMN click_type TEXT`, () => {});
+    
+    // Create new links table if it doesn't exist (migration safe)
+    db.run(`CREATE TABLE IF NOT EXISTS links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      story_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      comments_url TEXT,
+      source TEXT NOT NULL,
+      points INTEGER,
+      comments INTEGER,
+      viewed BOOLEAN DEFAULT FALSE,
+      viewed_at DATETIME,
+      engaged BOOLEAN DEFAULT FALSE,
+      engaged_at DATETIME,
+      engagement_count INTEGER DEFAULT 0,
+      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      times_appeared INTEGER DEFAULT 1,
+      tags TEXT
+    )`, () => {});
+    
+    // Add engagement columns to existing links table
+    db.run(`ALTER TABLE links ADD COLUMN engaged BOOLEAN DEFAULT FALSE`, () => {});
+    db.run(`ALTER TABLE links ADD COLUMN engaged_at DATETIME`, () => {});
+    db.run(`ALTER TABLE links ADD COLUMN engagement_count INTEGER DEFAULT 0`, () => {});
+    
     // Create unique index on URL to prevent duplicates
     db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_url ON stories(url)`, () => {});
     
@@ -164,85 +196,247 @@ function generateArchiveDirectUrl(originalUrl) {
 }
 
 /**
- * Track when a story appears in the menu (impression tracking)
+ * Track when a story appears in the menu - adds to links table
  */
-function trackStoryAppearance(story) {
-  if (db) {
-    const archiveUrl = generateArchiveSubmissionUrl(story.url);
-    
-    // Convert story ID to integer - use hash for string IDs
-    let storyId;
-    if (typeof story.id === 'number') {
-      storyId = story.id;
+function trackLinkAppearance(story, source) {
+  if (!db) return;
+  
+  // Handle stories without URLs (like HN text posts)
+  let storyUrl = story.url;
+  if (!storyUrl) {
+    if (source === 'hn' && typeof story.id === 'number') {
+      // For HN text posts, use the HN discussion URL as the main URL
+      storyUrl = `https://news.ycombinator.com/item?id=${story.id}`;
     } else {
-      // For string IDs (like Reddit or Pinboard), create a hash
-      storyId = hashStringToInt(story.id);
+      console.warn('Skipping story without URL:', story.title);
+      return;
     }
-    
-    // Generate comments URL based on source
-    let commentsUrl = null;
-    if (story.comments_url) {
-      commentsUrl = story.comments_url;
-    } else if (story.url && story.url.includes('reddit.com')) {
-      commentsUrl = story.url; // For Reddit, the URL is the comments page
-    } else if (story.id && typeof story.id === 'number') {
-      // For HN, generate comments URL from story ID
-      commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
-    }
-    
-    // Try to insert new story, ignore if URL already exists due to unique constraint
-    db.run('INSERT OR IGNORE INTO stories (story_id, title, url, archive_url, comments_url, points, comments, impression_count) VALUES (?, ?, ?, ?, ?, ?, ?, 1)', 
-      [storyId, story.title, story.url, archiveUrl, commentsUrl, story.points, story.comments], function(err) {
-        if (err) {
-          console.error('Error inserting story:', err);
-        } else if (this.changes === 0) {
-          // Story already exists, increment impression count
-          db.run('UPDATE stories SET impression_count = impression_count + 1, points = ?, comments = ?, comments_url = ? WHERE url = ?', 
-            [story.points, story.comments, commentsUrl, story.url], (updateErr) => {
-              if (updateErr) {
-                console.error('Error updating impression count:', updateErr);
-              }
-            });
-        }
-      });
   }
+  
+  // Convert story ID to integer - use hash for string IDs
+  let storyId;
+  if (typeof story.id === 'number') {
+    storyId = story.id;
+  } else {
+    storyId = hashStringToInt(story.id);
+  }
+  
+  // Generate comments URL based on source
+  let commentsUrl = null;
+  if (story.comments_url) {
+    commentsUrl = story.comments_url;
+  } else if (source === 'reddit') {
+    commentsUrl = storyUrl; // For Reddit, the URL is the comments page
+  } else if (source === 'hn' && typeof story.id === 'number') {
+    commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+  }
+  
+  console.log(`📊 TRACKING LINK APPEARANCE: [${source.toUpperCase()}] Story ID: ${storyId}, Title: "${story.title || 'Untitled'}"`);
+  
+  // Check if link already exists
+  db.get('SELECT id, times_appeared FROM links WHERE story_id = ? AND source = ?', [storyId, source], (err, row) => {
+    if (err) {
+      console.error('Error checking existing link:', err);
+      return;
+    }
+    
+    if (row) {
+      // Link exists, update it
+      console.log(`📝 UPDATING EXISTING LINK: ID ${row.id}, Previous appearances: ${row.times_appeared}, New appearance count: ${row.times_appeared + 1}`);
+      db.run(`UPDATE links SET 
+        title = ?, 
+        points = ?, 
+        comments = ?, 
+        comments_url = ?,
+        last_seen_at = CURRENT_TIMESTAMP,
+        times_appeared = times_appeared + 1
+        WHERE id = ?`, 
+        [story.title || 'Untitled', story.points, story.comments, commentsUrl, row.id], (updateErr) => {
+          if (updateErr) {
+            console.error('Error updating link:', updateErr);
+          } else {
+            console.log(`✅ LINK UPDATED SUCCESSFULLY: ID ${row.id}`);
+          }
+        });
+    } else {
+      // New link, insert it
+      console.log(`💾 PERSISTING NEW LINK TO DATABASE: [${source.toUpperCase()}] Story ID: ${storyId}`);
+      db.run(`INSERT INTO links (
+        story_id, title, url, comments_url, source, points, comments
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`, 
+        [storyId, story.title || 'Untitled', storyUrl, commentsUrl, source, story.points, story.comments], 
+        function(err) {
+          if (err) {
+            console.error('Error inserting link:', err);
+          } else {
+            console.log(`✅ NEW LINK PERSISTED: Database ID ${this.lastID}, Story ID: ${storyId}, Source: ${source.toUpperCase()}, Title: "${story.title || 'Untitled'}"`);
+          }
+        });
+    }
+  });
 }
 
 /**
- * Track when a user clicks on a story
+ * Legacy function - now calls trackLinkAppearance
  */
-function trackClick(storyId, title, url, points, comments, commentsUrl = null) {
-  if (db) {
-    // Convert story ID to integer - use hash for string IDs
-    let normalizedStoryId;
-    if (typeof storyId === 'number') {
-      normalizedStoryId = storyId;
-    } else {
-      normalizedStoryId = hashStringToInt(storyId);
-    }
-    
-    // Generate comments URL if not provided
-    if (!commentsUrl) {
-      if (url && url.includes('reddit.com')) {
-        commentsUrl = url; // For Reddit, the URL is the comments page
-      } else if (typeof storyId === 'number') {
-        // For HN, generate comments URL from story ID
-        commentsUrl = `https://news.ycombinator.com/item?id=${storyId}`;
+function trackStoryAppearance(story) {
+  // Determine source from URL or story properties
+  let source = 'unknown';
+  if (story.url && story.url.includes('reddit.com')) {
+    source = 'reddit';
+  } else if (typeof story.id === 'number') {
+    source = 'hn';
+  } else if (story.url && (story.url.includes('pinboard.in') || story.source === 'pinboard')) {
+    source = 'pinboard';
+  }
+  
+  trackLinkAppearance(story, source);
+}
+
+/**
+ * Track when a user engages with a story (expands submenu, hovers, shows interest)
+ */
+function trackEngagement(storyId, source) {
+  if (!db) return;
+  
+  // Convert story ID to integer - use hash for string IDs
+  let normalizedStoryId;
+  if (typeof storyId === 'number') {
+    normalizedStoryId = storyId;
+  } else {
+    normalizedStoryId = hashStringToInt(storyId);
+  }
+  
+  console.log(`🎯 ENGAGEMENT TRACKED: [${source.toUpperCase()}] Story ID: ${normalizedStoryId}`);
+  
+  // Update the link with engagement data
+  db.run(`UPDATE links SET 
+    engaged = TRUE, 
+    engaged_at = CURRENT_TIMESTAMP,
+    engagement_count = engagement_count + 1
+    WHERE story_id = ? AND source = ?`, 
+    [normalizedStoryId, source], (err) => {
+      if (err) {
+        console.error('Error tracking engagement:', err);
+      } else {
+        console.log(`✅ ENGAGEMENT RECORDED: [${source.toUpperCase()}] Story ID: ${normalizedStoryId}`);
       }
+    });
+}
+
+/**
+ * Track when a user expands a story menu (shows the submenu) - now tracks engagement
+ */
+function trackExpansion(storyId, source) {
+  trackEngagement(storyId, source);
+}
+
+/**
+ * Track when a user clicks through to an article
+ */
+function trackArticleClick(storyId, source) {
+  console.log(`🔗 ARTICLE CLICK: [${source.toUpperCase()}] Story ID: ${storyId}`);
+  trackClickEvent(storyId, source, 'article');
+  markLinkAsViewed(storyId, source);
+}
+
+/**
+ * Track when a user clicks through to comments
+ */
+function trackCommentsClick(storyId, source) {
+  console.log(`💬 COMMENTS CLICK: [${source.toUpperCase()}] Story ID: ${storyId}`);
+  trackClickEvent(storyId, source, 'comments');
+}
+
+/**
+ * Track when a user clicks through to archive
+ */
+function trackArchiveClick(storyId, source) {
+  console.log(`📚 ARCHIVE CLICK: [${source.toUpperCase()}] Story ID: ${storyId}`);
+  trackClickEvent(storyId, source, 'archive');
+}
+
+/**
+ * Internal function to track specific click events
+ */
+function trackClickEvent(storyId, source, clickType) {
+  if (!db) return;
+  
+  // Convert story ID to integer - use hash for string IDs
+  let normalizedStoryId;
+  if (typeof storyId === 'number') {
+    normalizedStoryId = storyId;
+  } else {
+    normalizedStoryId = hashStringToInt(storyId);
+  }
+  
+  console.log(`🎪 CLICK EVENT: [${source.toUpperCase()}] Story ID: ${normalizedStoryId}, Type: ${clickType}`);
+  
+  // Find the link data for insertion
+  db.get('SELECT id, story_id, title, url FROM links WHERE story_id = ? AND source = ?', [normalizedStoryId, source], (err, row) => {
+    if (err) {
+      console.error('Error finding link for click tracking:', err);
+      return;
     }
     
-    const archiveUrl = generateArchiveSubmissionUrl(url);
-    db.get('SELECT first_seen_at FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
-      const storyAddedAt = row ? row.first_seen_at : new Date().toISOString();
-      
-      db.run('INSERT INTO clicks (story_id, title, url, archive_url, comments_url, points, comments, story_added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 
-        [normalizedStoryId, title, url, archiveUrl, commentsUrl, points, comments, storyAddedAt], function(err) {
-        if (err) {
-          console.error('Error tracking click:', err);
+    if (row) {
+      // Record the click with all required legacy fields
+      console.log(`💾 PERSISTING CLICK TO DATABASE: Link ID ${row.id}, Type: ${clickType}`);
+      db.run('INSERT INTO clicks (story_id, title, url, link_id, click_type, clicked_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)', 
+        [row.story_id, row.title, row.url, row.id, clickType], (insertErr) => {
+        if (insertErr) {
+          console.error('Error tracking click:', insertErr);
+        } else {
+          console.log(`✅ CLICK PERSISTED: Link ID ${row.id}, Type: ${clickType}, Story ID: ${normalizedStoryId}`);
         }
       });
-    });
+    } else {
+      console.warn('No link found for click tracking:', normalizedStoryId, source);
+    }
+  });
+}
+
+/**
+ * Mark a link as viewed and update viewed_at timestamp
+ */
+function markLinkAsViewed(storyId, source) {
+  if (!db) return;
+  
+  // Convert story ID to integer - use hash for string IDs
+  let normalizedStoryId;
+  if (typeof storyId === 'number') {
+    normalizedStoryId = storyId;
+  } else {
+    normalizedStoryId = hashStringToInt(storyId);
   }
+  
+  console.log(`👀 MARKING LINK AS VIEWED: [${source.toUpperCase()}] Story ID: ${normalizedStoryId}`);
+  
+  db.run('UPDATE links SET viewed = TRUE, viewed_at = CURRENT_TIMESTAMP WHERE story_id = ? AND source = ?', 
+    [normalizedStoryId, source], (err) => {
+      if (err) {
+        console.error('Error marking link as viewed:', err);
+      } else {
+        console.log(`✅ LINK MARKED AS VIEWED: [${source.toUpperCase()}] Story ID: ${normalizedStoryId}`);
+      }
+    });
+}
+
+/**
+ * Legacy function - now calls trackArticleClick
+ */
+function trackClick(storyId, title, url, points, comments, commentsUrl = null) {
+  // Determine source from URL
+  let source = 'unknown';
+  if (url && url.includes('reddit.com')) {
+    source = 'reddit';
+  } else if (typeof storyId === 'number') {
+    source = 'hn';
+  } else if (url && url.includes('pinboard.in')) {
+    source = 'pinboard';
+  }
+  
+  trackArticleClick(storyId, source);
 }
 
 function addTagToStory(storyId, tag) {
@@ -386,11 +580,13 @@ function saveArticle(articleData, callback) {
   );
 }
 
-function trackArticleClick(articleId, callback) {
+function trackSavedArticleClick(articleId, callback) {
   if (!db) {
     if (callback) callback(new Error('Database not initialized'));
     return;
   }
+
+  console.log(`📖 SAVED ARTICLE CLICK: Article ID: ${articleId}`);
 
   db.run(`UPDATE articles 
           SET click_count = click_count + 1, last_clicked_at = CURRENT_TIMESTAMP 
@@ -399,6 +595,8 @@ function trackArticleClick(articleId, callback) {
     function(err) {
       if (err) {
         console.error('Error tracking article click:', err);
+      } else {
+        console.log(`✅ SAVED ARTICLE CLICK TRACKED: Article ID: ${articleId}`);
       }
       if (callback) callback(err);
     }
@@ -548,6 +746,10 @@ function clearAllData(callback) {
       if (err) console.error('Error clearing clicks:', err);
     });
     
+    db.run('DELETE FROM links', (err) => {
+      if (err) console.error('Error clearing links:', err);
+    });
+    
     db.run('DELETE FROM stories', (err) => {
       if (err) console.error('Error clearing stories:', err);
       console.log('Database cleared successfully');
@@ -561,7 +763,14 @@ module.exports = {
   generateArchiveSubmissionUrl,
   generateArchiveDirectUrl,
   trackStoryAppearance,
+  trackLinkAppearance,
+  trackEngagement,
+  trackExpansion,
+  trackArticleClick,
+  trackCommentsClick,
+  trackArchiveClick,
   trackClick,
+  markLinkAsViewed,
   addTagToStory,
   getStoryTags,
   removeTagFromStory,
@@ -571,7 +780,7 @@ module.exports = {
   getArticles,
   searchArticles,
   getArticleStats,
-  trackArticleClick,
+  trackSavedArticleClick,
   getDatabase,
   clearModuleCache,
   clearAllData

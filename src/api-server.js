@@ -8,7 +8,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { API_PORT, HTTPS_PORT } = require('./config');
-const { saveArticle, getArticles, searchArticles, getArticleStats, trackArticleClick, getDatabase } = require('./database');
+const { saveArticle, getArticles, searchArticles, getArticleStats, trackSavedArticleClick, getDatabase } = require('./database');
 
 let apiServer = null;
 let httpsServer = null;
@@ -160,7 +160,7 @@ function initApiServer() {
   server.post('/api/articles/:id/click', (req, res) => {
     const articleId = parseInt(req.params.id);
     
-    trackArticleClick(articleId, (err) => {
+    trackSavedArticleClick(articleId, (err) => {
       if (err) {
         res.status(500).json({ error: err.message });
       } else {
