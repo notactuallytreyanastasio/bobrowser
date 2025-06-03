@@ -117,6 +117,10 @@ function initDatabase(callback) {
  * Generate archive.ph submission URL to force archiving
  */
 function generateArchiveSubmissionUrl(originalUrl) {
+  if (!originalUrl) {
+    console.warn('generateArchiveSubmissionUrl: originalUrl is null or undefined');
+    return 'https://archive.ph';
+  }
   return `https://dgy3yyibpm3nn7.archive.ph/?url=${encodeURIComponent(originalUrl)}`;
 }
 
@@ -124,7 +128,11 @@ function generateArchiveSubmissionUrl(originalUrl) {
  * Generate direct archive.ph URL for accessing archived version
  */
 function generateArchiveDirectUrl(originalUrl) {
-  return `https://archive.ph/${originalUrl}`;
+  if (!originalUrl) {
+    console.warn('generateArchiveDirectUrl: originalUrl is null or undefined');
+    return 'https://archive.ph';
+  }
+  return `https://archive.ph/${encodeURIComponent(originalUrl)}`;
 }
 
 /**
@@ -369,6 +377,61 @@ function getArticleStats(callback) {
     FROM articles`, callback);
 }
 
+function searchStoriesByTags(tagQuery, callback) {
+  if (!db) {
+    callback(new Error('Database not initialized'));
+    return;
+  }
+
+  if (!tagQuery || !tagQuery.trim()) {
+    callback(null, []);
+    return;
+  }
+
+  // Parse comma-separated tags and clean them
+  const searchTags = tagQuery.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag);
+  
+  if (searchTags.length === 0) {
+    callback(null, []);
+    return;
+  }
+
+  // Build WHERE clause for OR conditions on tags
+  const tagConditions = searchTags.map(() => 'tags LIKE ?').join(' OR ');
+  const tagParams = searchTags.map(tag => `%${tag}%`);
+  
+  const query = `
+    SELECT story_id, title, url, points, comments, tags, impression_count, first_seen_at
+    FROM stories 
+    WHERE (${tagConditions}) AND tags IS NOT NULL AND tags != ''
+    ORDER BY impression_count DESC, first_seen_at DESC
+    LIMIT 20
+  `;
+
+  db.all(query, tagParams, (err, rows) => {
+    if (err) {
+      console.error('Error searching stories by tags:', err);
+      callback(err, []);
+    } else {
+      // Transform database rows to story format and filter out stories without URLs
+      const stories = rows
+        .map(row => ({
+          id: row.story_id,
+          title: row.title,
+          url: row.url,
+          points: row.points || 0,
+          comments: row.comments || 0,
+          tags: row.tags ? row.tags.split(',').map(t => t.trim()).filter(t => t) : [],
+          impression_count: row.impression_count || 0,
+          first_seen_at: row.first_seen_at
+        }))
+        .filter(story => story.url && story.url.trim()); // Filter out stories without valid URLs
+      
+      callback(null, stories);
+    }
+  });
+}
+
 function getDatabase() {
   return db;
 }
@@ -383,6 +446,7 @@ module.exports = {
   getStoryTags,
   removeTagFromStory,
   getAllUniqueTags,
+  searchStoriesByTags,
   saveArticle,
   getArticles,
   searchArticles,

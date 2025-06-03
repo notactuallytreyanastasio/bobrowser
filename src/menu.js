@@ -12,11 +12,86 @@ const {
   addTagToStory,
   getStoryTags,
   generateArchiveSubmissionUrl,
-  generateArchiveDirectUrl 
+  generateArchiveDirectUrl,
+  searchStoriesByTags
 } = require('./database');
-const { promptForCustomTag, showArticleLibrary } = require('./ui');
+const { promptForCustomTag, showArticleLibrary, promptForTagSearch } = require('./ui');
 
 let tray = null;
+let currentSearchQuery = '';
+
+/**
+ * Create menu items for search results
+ */
+function createSearchResultItems(searchResults) {
+  if (!searchResults || searchResults.length === 0) {
+    return [{
+      label: '🔍 No stories found for these tags',
+      enabled: false
+    }];
+  }
+
+  return searchResults.map(story => ({
+    label: `🔍 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title} [${story.tags.join(', ')}]`,
+    submenu: [
+      {
+        label: '🚀 Open Article + Archive',
+        click: () => {
+          console.log('Search result clicked:', story.title);
+          console.log('Story URL:', story.url);
+          
+          if (!story.url) {
+            console.error('Story has no URL:', story);
+            return;
+          }
+          
+          const archiveSubmissionUrl = generateArchiveSubmissionUrl(story.url);
+          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
+          trackClick(story.id, story.title, story.url, story.points, story.comments);
+          
+          // 1. Open archive.ph submission URL (triggers archiving)
+          shell.openExternal(archiveSubmissionUrl);
+          
+          // 2. Open direct archive.ph link
+          setTimeout(() => {
+            shell.openExternal(archiveDirectUrl);
+          }, 200);
+          
+          // 3. Open the original article
+          setTimeout(() => {
+            shell.openExternal(story.url);
+          }, 400);
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '🏷️ Add Tag',
+        submenu: [
+          {
+            label: '✏️ Custom Tag...',
+            click: () => {
+              promptForCustomTag(story.id, story.title);
+            }
+          }
+        ]
+      },
+      { type: 'separator' },
+      {
+        label: '🔗 Open Original',
+        click: () => {
+          shell.openExternal(story.url);
+        }
+      },
+      {
+        label: '📚 Open Archive',
+        click: () => {
+          const archiveDirectUrl = generateArchiveDirectUrl(story.url);
+          shell.openExternal(archiveDirectUrl);
+        }
+      }
+    ]
+  }));
+}
 
 /**
  * Create system tray icon and initialize menu
@@ -66,13 +141,52 @@ async function updateMenu() {
   redditStories.forEach(story => trackStoryAppearance(story));
   pinboardStories.forEach(story => trackStoryAppearance(story));
   
-  const menuTemplate = [
+  const menuTemplate = [];
+
+  // If there's an active search, show search results first
+  if (currentSearchQuery && currentSearchQuery.trim()) {
+    const searchResults = await new Promise((resolve) => {
+      searchStoriesByTags(currentSearchQuery, (err, results) => {
+        if (err) {
+          console.error('Search error:', err);
+          resolve([]);
+        } else {
+          resolve(results);
+        }
+      });
+    });
+
+    menuTemplate.push(
+      {
+        label: `━━━ SEARCH RESULTS: "${currentSearchQuery}" ━━━`,
+        enabled: false
+      },
+      { type: 'separator' }
+    );
+
+    const searchItems = createSearchResultItems(searchResults);
+    menuTemplate.push(...searchItems);
+
+    menuTemplate.push(
+      { type: 'separator' },
+      {
+        label: '❌ Clear Search',
+        click: () => {
+          currentSearchQuery = '';
+          updateMenu();
+        }
+      },
+      { type: 'separator' }
+    );
+  }
+
+  menuTemplate.push(
     {
       label: '━━━━━━ HACKER NEWS ━━━━━━',
       enabled: false
     },
     { type: 'separator' }
-  ];
+  );
   
   const storyItems = stories.map((story, index) => {
     console.log(`Creating HN story item ${index}:`, story.title);
@@ -86,6 +200,9 @@ async function updateMenu() {
             // Open the actual article URL + HN discussion + archive
             const articleUrl = story.url || `https://news.ycombinator.com/item?id=${story.id}`;
             const hnDiscussionUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+            
+            console.log('HN story URL:', articleUrl);
+            
             const archiveSubmissionUrl = generateArchiveSubmissionUrl(articleUrl);
             const archiveDirectUrl = generateArchiveDirectUrl(articleUrl);
             trackClick(story.id, story.title, articleUrl, story.points, story.comments);
@@ -326,6 +443,16 @@ async function updateMenu() {
       label: '🗃️ Article Archive',
       click: () => {
         showArticleLibrary();
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '🔍 Search Stories by Tags',
+      click: () => {
+        promptForTagSearch((query) => {
+          currentSearchQuery = query;
+          updateMenu(); // Refresh menu with search results
+        });
       }
     },
     { type: 'separator' },

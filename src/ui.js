@@ -479,7 +479,150 @@ function showArticleLibrary() {
   }
 }
 
+/**
+ * Show tag search input dialog
+ */
+function promptForTagSearch(callback) {
+  const searchWindow = new BrowserWindow({
+    width: 500,
+    height: 150,
+    title: 'Search Stories by Tags',
+    resizable: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Search Stories by Tags</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+          padding: 20px;
+          margin: 0;
+          background: #f8f9fa;
+        }
+        .container {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h3 {
+          margin: 0 0 15px 0;
+          color: #333;
+        }
+        .help-text {
+          font-size: 12px;
+          color: #666;
+          margin-bottom: 15px;
+        }
+        input[type="text"] {
+          width: 100%;
+          padding: 12px;
+          border: 2px solid #ddd;
+          border-radius: 6px;
+          font-size: 14px;
+          margin-bottom: 15px;
+          box-sizing: border-box;
+        }
+        input[type="text"]:focus {
+          outline: none;
+          border-color: #007bff;
+        }
+        .buttons {
+          display: flex;
+          gap: 10px;
+          justify-content: flex-end;
+        }
+        button {
+          padding: 10px 20px;
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          background: white;
+          cursor: pointer;
+          font-size: 14px;
+        }
+        .btn-primary {
+          background: #007bff;
+          color: white;
+          border-color: #007bff;
+        }
+        .btn-primary:hover {
+          background: #0056b3;
+        }
+        .btn-secondary {
+          background: #6c757d;
+          color: white;
+          border-color: #6c757d;
+        }
+        .btn-secondary:hover {
+          background: #545b62;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h3>🔍 Search Stories by Tags</h3>
+        <div class="help-text">Enter comma-separated tags (e.g., "tech,ai" or "programming,business")</div>
+        <input type="text" id="searchInput" placeholder="tech,food,programming..." autocomplete="off">
+        <div class="buttons">
+          <button onclick="clearSearch()">Clear Search</button>
+          <button onclick="window.close()">Cancel</button>
+          <button class="btn-primary" onclick="doSearch()">Search</button>
+        </div>
+      </div>
+      
+      <script>
+        const { ipcRenderer } = require('electron');
+        
+        function doSearch() {
+          const searchInput = document.getElementById('searchInput');
+          const query = searchInput.value.trim();
+          
+          ipcRenderer.send('tag-search', query);
+          window.close();
+        }
+        
+        function clearSearch() {
+          ipcRenderer.send('tag-search', '');
+          window.close();
+        }
+        
+        // Focus input and allow Enter key
+        document.addEventListener('DOMContentLoaded', () => {
+          const input = document.getElementById('searchInput');
+          input.focus();
+          
+          input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+              doSearch();
+            }
+          });
+        });
+      </script>
+    </body>
+    </html>
+  `;
+
+  searchWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  
+  // Handle the search
+  const { ipcMain } = require('electron');
+  ipcMain.removeAllListeners('tag-search'); // Remove previous listeners
+  ipcMain.on('tag-search', (event, query) => {
+    callback(query);
+    searchWindow.close();
+  });
+}
+
 module.exports = {
   promptForCustomTag,
-  showArticleLibrary
+  showArticleLibrary,
+  promptForTagSearch
 };
