@@ -6,6 +6,8 @@
   "scripts": {
     "start": "NODE_ENV=development electron .",
     "dev": "NODE_ENV=development electron .",
+    "prod": "electron .",
+    "hot": "NODE_ENV=development nodemon --exec 'electron .' --watch src/ --ext js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,6 +22,7 @@
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
-    "electron-reload": "^2.0.0-alpha.1"
+    "electron-reload": "^2.0.0-alpha.1",
+    "nodemon": "^3.0.0"
   }
 }

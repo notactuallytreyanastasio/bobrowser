@@ -3,7 +3,7 @@
  */
 
 const { BrowserWindow, shell } = require('electron');
-const { addTagToStory, getArticles } = require('./database');
+const { addTagToStory, getArticles, trackArticleClick, getDatabase } = require('./database');
 
 /**
  * Show custom tag input dialog
@@ -134,6 +134,9 @@ function promptForCustomTag(storyId, storyTitle) {
   ipcMain.on('add-custom-tag', (event, storyId, tag) => {
     addTagToStory(storyId, tag);
     tagInputWindow.close();
+    // Refresh the menu after adding the tag
+    const { updateMenu } = require('./menu');
+    setTimeout(updateMenu, 100);
   });
 }
 
@@ -621,8 +624,350 @@ function promptForTagSearch(callback) {
   });
 }
 
+/**
+ * Show database browser window with click history
+ */
+function showDatabaseBrowser() {
+  try {
+    console.log('showDatabaseBrowser: Starting...');
+    
+    const win = new BrowserWindow({
+      width: 1200,
+      height: 800,
+      title: '🗄️ Database Browser',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+
+    const db = getDatabase();
+    console.log('Database object:', db ? 'exists' : 'null');
+    if (!db) {
+      console.error('Database not initialized');
+      win.loadURL('data:text/html,<h1>Database Error</h1><p>Database not initialized</p>');
+      return;
+    }
+
+    // Get the click data first, then load the page
+    console.log('Executing database query...');
+    db.all(`SELECT 
+      c.id,
+      c.story_id,
+      c.title,
+      c.url,
+      c.points,
+      c.comments,
+      c.clicked_at,
+      c.story_added_at
+    FROM clicks c
+    ORDER BY c.clicked_at DESC 
+    LIMIT 100`, [], (err, rows) => {
+      if (err) {
+        console.error('Database query error:', err);
+        win.loadURL(`data:text/html,<h1>Database Error</h1><p>${err.message}</p>`);
+        return;
+      }
+
+      console.log('Database Browser: Found', rows.length, 'click records');
+
+      // Create compact clickable links
+      const clicksHtml = rows.map(click => {
+        const isReddit = click.url && click.url.includes('reddit.com');
+        return `
+          <div style="margin-bottom: 4px; line-height: 1.3;">
+            <a href="#" onclick="openLink('${click.url}')" style="font-size: 12pt; color: #0066cc; text-decoration: none; margin-right: 8px;">
+              ${click.title || 'Untitled'}
+            </a>
+            ${isReddit ? `<a href="#" onclick="openLink('${click.url}')" style="font-size: 10pt; color: #888; text-decoration: none;">[comments]</a>` : ''}
+            <span style="font-size: 10pt; color: #888; margin-left: 8px;">
+              ${click.clicked_at ? new Date(click.clicked_at).toLocaleDateString() : ''}
+              ${click.points ? ` • ${click.points}pts` : ''}
+            </span>
+          </div>
+        `;
+      }).join('');
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Database Browser</title>
+          <style>
+            body { 
+              font-family: system-ui; 
+              margin: 0; 
+              padding: 8px; 
+              background: white; 
+              font-size: 12pt;
+            }
+            a:hover { text-decoration: underline; }
+          </style>
+        </head>
+        <body>
+          ${rows.length === 0 ? '<p>No clicks found</p>' : clicksHtml}
+          
+          <script>
+            const { shell } = require('electron');
+            function openLink(url) {
+              if (url) {
+                shell.openExternal(url);
+              }
+            }
+          </script>
+        </body>
+        </html>
+      `;
+
+      console.log('Loading database browser HTML...');
+      win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
+    });
+
+    win.on('closed', () => {
+      console.log('Database browser window closed');
+    });
+
+  } catch (error) {
+    console.error('Error in showDatabaseBrowser:', error);
+  }
+}
+
+/**
+ * Show article browser window with saved articles ordered by clicks
+ */
+function showArticleBrowser() {
+  try {
+    const win = new BrowserWindow({
+      width: 900,
+      height: 700,
+      title: '📚 Article Browser',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+
+    getArticles(100, 0, (err, articles) => {
+      if (err) {
+        console.error('Error fetching articles:', err);
+        articles = [];
+      }
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>📚 Article Browser</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+              margin: 0;
+              padding: 20px;
+              background-color: #f5f5f5;
+              line-height: 1.6;
+            }
+            .header {
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: white;
+              padding: 20px;
+              border-radius: 12px;
+              margin-bottom: 20px;
+              text-align: center;
+            }
+            .header h1 {
+              margin: 0;
+              font-size: 28px;
+              font-weight: 300;
+            }
+            .stats {
+              font-size: 14px;
+              opacity: 0.9;
+              margin-top: 8px;
+            }
+            .article-list {
+              background: white;
+              border-radius: 12px;
+              box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              overflow: hidden;
+            }
+            .article {
+              background: white;
+              margin: 0;
+              padding: 20px;
+              border-bottom: 1px solid #e0e0e0;
+              transition: background-color 0.2s;
+            }
+            .article:hover {
+              background-color: #f8f9fa;
+            }
+            .article:last-child {
+              border-bottom: none;
+            }
+            .article-title {
+              color: #0066cc;
+              text-decoration: none;
+              font-weight: 600;
+              font-size: 18px;
+              line-height: 1.4;
+              display: block;
+              margin-bottom: 10px;
+              cursor: pointer;
+            }
+            .article-title:hover {
+              text-decoration: underline;
+            }
+            .article-meta {
+              color: #666;
+              font-size: 14px;
+              display: flex;
+              flex-wrap: wrap;
+              gap: 15px;
+              margin-bottom: 5px;
+            }
+            .domain {
+              color: #888;
+              font-size: 13px;
+            }
+            .click-count {
+              background: #e3f2fd;
+              color: #1976d2;
+              padding: 4px 8px;
+              border-radius: 12px;
+              font-size: 11px;
+              font-weight: bold;
+            }
+            .date {
+              color: #888;
+              font-size: 13px;
+            }
+            .search-box {
+              width: 100%;
+              padding: 12px;
+              border: 2px solid #ddd;
+              border-radius: 8px;
+              font-size: 14px;
+              margin-bottom: 20px;
+              box-sizing: border-box;
+            }
+            .search-box:focus {
+              outline: none;
+              border-color: #667eea;
+            }
+            .empty-state {
+              text-align: center;
+              padding: 60px 20px;
+              color: #7f8c8d;
+            }
+            .empty-state h2 {
+              font-size: 24px;
+              margin-bottom: 8px;
+              font-weight: 300;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>📚 Article Browser</h1>
+            <div class="stats">${articles.length} articles saved • Ordered by clicks</div>
+          </div>
+          
+          <input type="text" id="searchBox" class="search-box" placeholder="Search articles by title or domain...">
+          
+          <div class="article-list" id="articleList">
+            ${articles.length === 0 ? `
+              <div class="empty-state">
+                <h2>No articles saved yet</h2>
+                <p>Save articles through the API to see them here</p>
+              </div>
+            ` : articles.map(article => `
+              <div class="article" data-title="${(article.title || '').toLowerCase()}" data-domain="${(article.domain || '').toLowerCase()}">
+                <a href="#" class="article-title" onclick="trackAndOpenArticle(${article.id}, '${article.url}')">
+                  ${article.title || 'Untitled'}
+                </a>
+                <div class="article-meta">
+                  <span class="domain">${article.domain || extractDomain(article.url)}</span>
+                  ${article.click_count > 0 ? `<span class="click-count">${article.click_count} clicks</span>` : ''}
+                  <span class="date">Saved: ${formatDate(article.saved_at)}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <script>
+            const { shell } = require('electron');
+
+            function formatDate(dateString) {
+              if (!dateString) return 'Unknown';
+              return new Date(dateString).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+              });
+            }
+
+            function extractDomain(url) {
+              try {
+                return new URL(url).hostname;
+              } catch {
+                return 'Unknown domain';
+              }
+            }
+
+            function trackAndOpenArticle(articleId, url) {
+              // Track the click
+              fetch('http://127.0.0.1:3002/api/articles/' + articleId + '/click', { 
+                method: 'POST' 
+              }).catch(err => console.error('Error tracking click:', err));
+              
+              // Open the URL
+              shell.openExternal(url);
+            }
+
+            // Search functionality
+            document.getElementById('searchBox').addEventListener('input', (e) => {
+              const query = e.target.value.toLowerCase();
+              const articles = document.querySelectorAll('.article');
+              
+              articles.forEach(article => {
+                const title = article.dataset.title || '';
+                const domain = article.dataset.domain || '';
+                
+                if (title.includes(query) || domain.includes(query)) {
+                  article.style.display = 'block';
+                } else {
+                  article.style.display = 'none';
+                }
+              });
+            });
+          </script>
+        </body>
+        </html>
+      `;
+
+      win.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
+    });
+
+    win.on('closed', () => {});
+
+  } catch (error) {
+    console.error('Error opening article browser:', error);
+  }
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return 'Unknown';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
 module.exports = {
   promptForCustomTag,
   showArticleLibrary,
-  promptForTagSearch
+  promptForTagSearch,
+  showDatabaseBrowser,
+  showArticleBrowser
 };

@@ -51,6 +51,19 @@ REDDIT_SUBREDDITS=news,programming,technology  # optional
 
 Or use the setup dialog that appears when first starting without credentials.
 
+#### Configuring Subreddits
+
+You can configure which subreddits to fetch stories from in two ways:
+
+1. **Environment variable** - Add to your `.env` file:
+   ```env
+   REDDIT_SUBREDDITS=news,programming,technology
+   ```
+
+2. **Edit config file** - Modify the hardcoded list in `src/config.js:12-14`
+
+**Default subreddits:** news, television, elixir, aitah, bestofredditorupdates, explainlikeimfive
+
 ### API Server (Optional)
 
 The app includes HTTP/HTTPS servers for external integrations:

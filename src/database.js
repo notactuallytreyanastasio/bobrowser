@@ -20,11 +20,27 @@ function hashStringToInt(str) {
 }
 
 /**
+ * Extract domain from URL
+ */
+function extractDomain(url) {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (error) {
+    console.warn('Invalid URL:', url);
+    return null;
+  }
+}
+
+/**
  * Initialize SQLite database with required tables and schema
  * @param {Function} callback - Callback function to execute after initialization
  */
 function initDatabase(callback) {
-  db = new sqlite3.Database('clicks.db');
+  const path = require('path');
+  const dbPath = path.join(__dirname, '..', 'clicks.db');
+  console.log('Database path:', dbPath);
+  db = new sqlite3.Database(dbPath);
   
   db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS clicks (
@@ -51,6 +67,8 @@ function initDatabase(callback) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       url TEXT NOT NULL UNIQUE,
       title TEXT NOT NULL,
+      domain TEXT,
+      click_count INTEGER DEFAULT 0,
       author TEXT,
       publish_date TEXT,
       content TEXT,
@@ -58,6 +76,7 @@ function initDatabase(callback) {
       word_count INTEGER,
       reading_time INTEGER,
       saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_clicked_at DATETIME,
       tags TEXT,
       notes TEXT,
       archive_path TEXT,
@@ -108,6 +127,11 @@ function initDatabase(callback) {
     
     // Create unique index on URL to prevent duplicates
     db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_url ON stories(url)`, () => {});
+    
+    // Add new columns to articles table for existing databases
+    db.run(`ALTER TABLE articles ADD COLUMN domain TEXT`, () => {});
+    db.run(`ALTER TABLE articles ADD COLUMN click_count INTEGER DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE articles ADD COLUMN last_clicked_at DATETIME`, () => {});
     
     if (callback) callback();
   });
@@ -319,10 +343,12 @@ function saveArticle(articleData, callback) {
     wordCount, readingTime, tags = null, notes = null
   } = articleData;
 
+  const domain = extractDomain(url);
+
   db.run(`INSERT OR REPLACE INTO articles 
-    (url, title, author, publish_date, content, text_content, word_count, reading_time, tags, notes) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [url, title, author, publishDate, content, textContent, wordCount, readingTime, tags, notes],
+    (url, title, domain, author, publish_date, content, text_content, word_count, reading_time, tags, notes) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [url, title, domain, author, publishDate, content, textContent, wordCount, readingTime, tags, notes],
     function(err) {
       if (err) {
         console.error('Error saving article:', err);
@@ -335,6 +361,25 @@ function saveArticle(articleData, callback) {
   );
 }
 
+function trackArticleClick(articleId, callback) {
+  if (!db) {
+    if (callback) callback(new Error('Database not initialized'));
+    return;
+  }
+
+  db.run(`UPDATE articles 
+          SET click_count = click_count + 1, last_clicked_at = CURRENT_TIMESTAMP 
+          WHERE id = ?`, 
+    [articleId], 
+    function(err) {
+      if (err) {
+        console.error('Error tracking article click:', err);
+      }
+      if (callback) callback(err);
+    }
+  );
+}
+
 function getArticles(limit = 50, offset = 0, callback) {
   if (!db) {
     callback(new Error('Database not initialized'));
@@ -342,7 +387,7 @@ function getArticles(limit = 50, offset = 0, callback) {
   }
 
   db.all(`SELECT * FROM articles 
-          ORDER BY saved_at DESC 
+          ORDER BY click_count DESC, saved_at DESC 
           LIMIT ? OFFSET ?`, 
     [limit, offset], callback);
 }
@@ -436,6 +481,56 @@ function getDatabase() {
   return db;
 }
 
+/**
+ * Clear module cache for development hot reloading
+ */
+function clearModuleCache() {
+  if (process.env.NODE_ENV === 'development') {
+    const srcPath = require('path').join(__dirname);
+    Object.keys(require.cache).forEach(key => {
+      if (key.startsWith(srcPath)) {
+        delete require.cache[key];
+        console.log('Cleared cache for:', key);
+      }
+    });
+  }
+}
+
+/**
+ * Clear all data from the database (development only)
+ */
+function clearAllData(callback) {
+  if (process.env.NODE_ENV !== 'development') {
+    console.error('clearAllData can only be used in development mode');
+    return;
+  }
+  
+  if (!db) {
+    console.error('Database not initialized');
+    return;
+  }
+
+  db.serialize(() => {
+    db.run('DELETE FROM articles_fts', (err) => {
+      if (err) console.error('Error clearing articles_fts:', err);
+    });
+    
+    db.run('DELETE FROM articles', (err) => {
+      if (err) console.error('Error clearing articles:', err);
+    });
+    
+    db.run('DELETE FROM clicks', (err) => {
+      if (err) console.error('Error clearing clicks:', err);
+    });
+    
+    db.run('DELETE FROM stories', (err) => {
+      if (err) console.error('Error clearing stories:', err);
+      console.log('Database cleared successfully');
+      if (callback) callback();
+    });
+  });
+}
+
 module.exports = {
   initDatabase,
   generateArchiveSubmissionUrl,
@@ -451,5 +546,8 @@ module.exports = {
   getArticles,
   searchArticles,
   getArticleStats,
-  getDatabase
+  trackArticleClick,
+  getDatabase,
+  clearModuleCache,
+  clearAllData
 };

@@ -15,7 +15,7 @@ const {
   generateArchiveDirectUrl,
   searchStoriesByTags
 } = require('./database');
-const { promptForCustomTag, showArticleLibrary, promptForTagSearch } = require('./ui');
+const { promptForCustomTag, showArticleLibrary, promptForTagSearch, showDatabaseBrowser, showArticleBrowser } = require('./ui');
 
 let tray = null;
 let currentSearchQuery = '';
@@ -241,7 +241,10 @@ async function updateMenu() {
             { type: 'separator' },
             ...availableTags.map(tag => ({
               label: tag,
-              click: () => addTagToStory(story.id, tag)
+              click: () => {
+                addTagToStory(story.id, tag);
+                setTimeout(updateMenu, 100);
+              }
             }))
           ]
         },
@@ -323,12 +326,18 @@ async function updateMenu() {
           { type: 'separator' },
           ...availableTags.map(tag => ({
             label: tag,
-            click: () => addTagToStory(story.id, tag)
+            click: () => {
+              addTagToStory(story.id, tag);
+              setTimeout(updateMenu, 100);
+            }
           })),
           { type: 'separator' },
           {
             label: 'reddit',
-            click: () => addTagToStory(story.id, 'reddit')
+            click: () => {
+              addTagToStory(story.id, 'reddit');
+              setTimeout(updateMenu, 100);
+            }
           }
         ]
       },
@@ -409,12 +418,18 @@ async function updateMenu() {
           { type: 'separator' },
           ...availableTags.map(tag => ({
             label: tag,
-            click: () => addTagToStory(story.id, tag)
+            click: () => {
+              addTagToStory(story.id, tag);
+              setTimeout(updateMenu, 100);
+            }
           })),
           { type: 'separator' },
           {
             label: 'pinboard',
-            click: () => addTagToStory(story.id, 'pinboard')
+            click: () => {
+              addTagToStory(story.id, 'pinboard');
+              setTimeout(updateMenu, 100);
+            }
           }
         ]
       },
@@ -440,9 +455,9 @@ async function updateMenu() {
   menuTemplate.push(
     { type: 'separator' },
     {
-      label: '🗃️ Article Archive',
+      label: '🗄️ Database Browser',
       click: () => {
-        showArticleLibrary();
+        showDatabaseBrowser();
       }
     },
     { type: 'separator' },
@@ -455,7 +470,36 @@ async function updateMenu() {
         });
       }
     },
-    { type: 'separator' },
+    { type: 'separator' }
+  );
+
+  // Add development menu items if in dev mode
+  if (process.env.NODE_ENV === 'development') {
+    menuTemplate.push(
+      {
+        label: '🔄 Reload App',
+        click: () => {
+          const { clearModuleCache } = require('./database');
+          clearModuleCache();
+          updateMenu();
+          console.log('App modules reloaded');
+        }
+      },
+      {
+        label: '🗑️ Clear Database',
+        click: () => {
+          const { clearAllData } = require('./database');
+          clearAllData(() => {
+            updateMenu();
+            console.log('Database cleared and menu refreshed');
+          });
+        }
+      },
+      { type: 'separator' }
+    );
+  }
+
+  menuTemplate.push(
     {
       label: 'Quit',
       click: () => {

@@ -15,6 +15,7 @@
 // Core dependencies
 const { app } = require('electron');
 const path = require('path');
+const { Module } = require('module');
 
 // Local modules
 const { initDatabase } = require('./src/database');
@@ -25,8 +26,23 @@ const { initApiServer } = require('./src/api-server');
 if (process.env.NODE_ENV === 'development') {
   require('electron-reload')(__dirname, {
     electron: path.join(__dirname, 'node_modules', '.bin', 'electron'),
-    hardResetMethod: 'exit'
+    hardResetMethod: 'exit',
+    ignored: /node_modules|[\/\\]\.|clicks\.db/
   });
+  
+  // Clear module cache on reload to ensure fresh modules
+  const originalRequire = Module.prototype.require;
+  Module.prototype.require = function(...args) {
+    // Clear cache for our src modules on each require
+    const modulePath = args[0];
+    if (modulePath.startsWith('./src/') || modulePath.startsWith('../')) {
+      const resolved = require.resolve(modulePath);
+      if (resolved.includes(__dirname)) {
+        delete require.cache[resolved];
+      }
+    }
+    return originalRequire.apply(this, args);
+  };
 }
 
 
