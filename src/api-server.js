@@ -208,11 +208,11 @@ function initApiServer() {
 
     db.all(`SELECT 
       l.*,
-      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
-      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
-      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id), 0) as total_clicks,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article'), 0) as article_clicks,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage'), 0) as engagements
     FROM links l 
-    WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') = 0
+    WHERE COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article'), 0) = 0
     ORDER BY l.times_appeared ASC, RANDOM()
     LIMIT 100`, [], (err, rows) => {
       if (err) {
@@ -345,15 +345,16 @@ function initApiServer() {
     // Get 25 random unclicked links from the past week
     db.all(`SELECT 
       l.*,
-      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
-      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
-      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id), 0) as total_clicks,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article'), 0) as article_clicks,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage'), 0) as engagements
     FROM links l 
-    WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') = 0
+    WHERE COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article'), 0) = 0
     AND l.last_seen_at >= datetime('now', '-7 days')
     ORDER BY RANDOM()
     LIMIT 25`, [], (err, rows) => {
       if (err) {
+        console.error('Database error in discover:', err);
         res.status(500).json({ error: err.message });
       } else {
         res.json({ links: rows });
@@ -624,6 +625,9 @@ function initApiServer() {
     
     apiServer.on('error', (err) => {
       console.error('❌ HTTP Server Error:', err);
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${API_PORT} is already in use. Please close other instances.`);
+      }
     });
     
   } catch (error) {

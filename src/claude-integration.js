@@ -62,12 +62,11 @@ async function generateTagSuggestions(title, url = null) {
     console.log('🔍 Checking Claude Desktop availability...');
     const claudeAvailable = await checkClaudeDesktopAvailable();
     if (!claudeAvailable) {
-      console.log('❌ Claude Desktop not available, using mock suggestions');
-      const mockSuggestions = await generateMockSuggestions(title);
+      console.log('❌ Claude Desktop not available - no tags will be generated');
       return {
-        success: true,
-        tags: mockSuggestions,
-        source: 'mock'
+        success: false,
+        tags: [],
+        error: 'Claude Desktop not available'
       };
     } else {
       console.log('✅ Claude Desktop detected, attempting real AI integration...');
@@ -103,13 +102,12 @@ Return only the tags as a comma-separated list, no explanations.`;
       console.log('❌ Claude Desktop API failed:', claudeError.message);
     }
 
-    // Fallback to mock if Claude fails
-    console.log('🔄 Using mock suggestions as fallback');
-    const mockSuggestions = await generateMockSuggestions(title);
+    // No fallback - if Claude fails, return no tags
+    console.log('❌ Claude integration failed - no tags will be generated');
     return {
-      success: true,
-      tags: mockSuggestions,
-      source: 'mock-fallback'
+      success: false,
+      tags: [],
+      error: 'Claude integration failed'
     };
 
   } catch (error) {
@@ -380,42 +378,8 @@ function parseClaudeResponse(response) {
 /**
  * Mock tag generation for development (fallback when Claude is unavailable)
  */
-async function generateMockSuggestions(title) {
-  // Simple keyword-based mock suggestions for development
-  const titleLower = title.toLowerCase();
-  const mockTags = [];
-
-  // Technology tags
-  if (titleLower.includes('ai') || titleLower.includes('artificial intelligence')) {
-    mockTags.push('ai', 'machine-learning');
-  }
-  if (titleLower.includes('javascript') || titleLower.includes('js')) {
-    mockTags.push('javascript', 'web-development');
-  }
-  if (titleLower.includes('python')) {
-    mockTags.push('python', 'programming');
-  }
-  if (titleLower.includes('react') || titleLower.includes('vue') || titleLower.includes('angular')) {
-    mockTags.push('frontend', 'web-frameworks');
-  }
-
-  // General topic tags
-  if (titleLower.includes('startup') || titleLower.includes('business')) {
-    mockTags.push('business', 'startup');
-  }
-  if (titleLower.includes('security') || titleLower.includes('crypto')) {
-    mockTags.push('security', 'cybersecurity');
-  }
-  if (titleLower.includes('design') || titleLower.includes('ui') || titleLower.includes('ux')) {
-    mockTags.push('design', 'user-experience');
-  }
-
-  // Add some general tags
-  mockTags.push('tech', 'interesting');
-
-  // Remove duplicates and limit to 6 tags
-  return [...new Set(mockTags)].slice(0, 6);
-}
+// Mock function removed - only Claude tagging is supported
+// async function generateMockSuggestions(title) { ... }
 
 /**
  * Show tag suggestion window

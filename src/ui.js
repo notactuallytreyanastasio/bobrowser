@@ -886,6 +886,7 @@ function showDatabaseBrowser() {
         </div>
         
         <div class="filters">
+          <button class="filter-btn" onclick="filterByHours(1)">PAST HOUR</button>
           <button class="filter-btn" onclick="filterByDays(1)">1 DAY</button>
           <button class="filter-btn" onclick="filterByDays(7)">1 WEEK</button>
           <button class="filter-btn" onclick="filterByDays(30)">1 MONTH</button>
@@ -1146,6 +1147,25 @@ function showDatabaseBrowser() {
               btn.classList.remove('active');
             });
             activeBtn.classList.add('active');
+          }
+          
+          function filterByHours(hours) {
+            setActiveFilter(event.target);
+            
+            if (currentLinks.length === 0) {
+              return; // No data to filter
+            }
+            
+            const cutoffDate = new Date();
+            cutoffDate.setHours(cutoffDate.getHours() - hours);
+            
+            const filteredLinks = currentLinks.filter(link => {
+              // Use last_seen_at as the primary date, fallback to first_seen_at
+              const linkDate = new Date(link.last_seen_at || link.first_seen_at || 0);
+              return linkDate >= cutoffDate;
+            });
+            
+            renderFilteredResults(filteredLinks, \`\${currentTitle} (past \${hours} hour\${hours > 1 ? 's' : ''})\`);
           }
           
           function filterByDays(days) {
