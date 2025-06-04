@@ -39,7 +39,8 @@
       "main.js",
       "src/**/*",
       "package.json",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "!icon.png"
     ],
     "mac": {
       "category": "public.app-category.news",
@@ -48,7 +49,8 @@
           "target": "dmg",
           "arch": ["x64", "arm64"]
         }
-      ]
+      ],
+      "icon": null
     },
     "dmg": {
       "title": "${productName}"

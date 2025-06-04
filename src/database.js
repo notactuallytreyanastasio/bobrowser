@@ -38,7 +38,18 @@ function extractDomain(url) {
  */
 function initDatabase(callback) {
   const path = require('path');
-  const dbPath = path.join(__dirname, '..', 'clicks.db');
+  const fs = require('fs');
+  const { app } = require('electron');
+  
+  // Use Electron's userData directory for database storage
+  const userDataPath = app.getPath('userData');
+  const dbPath = path.join(userDataPath, 'clicks.db');
+  
+  // Ensure the userData directory exists
+  if (!fs.existsSync(userDataPath)) {
+    fs.mkdirSync(userDataPath, { recursive: true });
+  }
+  
   console.log('Database path:', dbPath);
   db = new sqlite3.Database(dbPath);
   
@@ -54,6 +65,28 @@ function initDatabase(callback) {
       story_added_at DATETIME,
       clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+    
+    // Links table for tracking story appearances and engagement
+    db.run(`CREATE TABLE IF NOT EXISTS links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      story_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      comments_url TEXT,
+      source TEXT NOT NULL,
+      points INTEGER,
+      comments INTEGER,
+      viewed BOOLEAN DEFAULT FALSE,
+      viewed_at DATETIME,
+      engaged BOOLEAN DEFAULT FALSE,
+      engaged_at DATETIME,
+      engagement_count INTEGER DEFAULT 0,
+      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      times_appeared INTEGER DEFAULT 1,
+      archive_url TEXT,
+      tags TEXT
+    )`, () => {});
     
     // Main stories table (consolidated from old links table)
     db.run(`CREATE TABLE IF NOT EXISTS stories (

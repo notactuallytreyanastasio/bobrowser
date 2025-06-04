@@ -129,19 +129,97 @@ function createSearchResultItems(searchResults) {
  * Create system tray icon and initialize menu
  */
 function createTray() {
+  console.log('🎯 Creating tray icon...');
   try {
-    tray = new Tray(path.join(__dirname, '..', 'icon.png'));
+    const { nativeImage } = require('electron');
+    
+    // Create a simple monochrome 16x16 tray icon using Canvas-like approach
+    // This creates a small circle that should work reliably across platforms
+    const size = 16;
+    const canvas = Buffer.alloc(size * size * 4); // RGBA buffer
+    
+    // Fill with transparent background
+    for (let i = 0; i < canvas.length; i += 4) {
+      canvas[i] = 0;     // R
+      canvas[i + 1] = 0; // G  
+      canvas[i + 2] = 0; // B
+      canvas[i + 3] = 0; // A (transparent)
+    }
+    
+    // Draw a simple filled circle in the center
+    const centerX = size / 2;
+    const centerY = size / 2;
+    const radius = 6;
+    
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+        if (distance <= radius) {
+          const idx = (y * size + x) * 4;
+          canvas[idx] = 255;     // R (white)
+          canvas[idx + 1] = 255; // G (white)  
+          canvas[idx + 2] = 255; // B (white)
+          canvas[idx + 3] = 255; // A (opaque)
+        }
+      }
+    }
+    
+    // Create the image from raw RGBA buffer
+    const trayIcon = nativeImage.createFromBuffer(canvas, {
+      width: size,
+      height: size
+    });
+    
+    if (trayIcon.isEmpty()) {
+      console.warn('⚠️ Created icon is empty, using fallback');
+      // Ultra-simple fallback - just create a 1x1 white pixel and resize
+      const fallbackCanvas = Buffer.from([255, 255, 255, 255]); // Single white pixel
+      const fallbackIcon = nativeImage.createFromBuffer(fallbackCanvas, {
+        width: 1,
+        height: 1
+      });
+      tray = new Tray(fallbackIcon.resize({ width: 16, height: 16 }));
+    } else {
+      tray = new Tray(trayIcon);
+    }
+    
+    console.log('✅ Tray icon created successfully');
     tray.setToolTip('BOB');
     
     updateMenu();
     
     // Update menu every time it's about to be shown
-    tray.on('click', updateMenu);
-    tray.on('right-click', updateMenu);
+    tray.on('click', () => {
+      console.log('🖱️ Tray clicked');
+      updateMenu();
+    });
+    tray.on('right-click', () => {
+      console.log('🖱️ Tray right-clicked');
+      updateMenu();
+    });
     
-    setInterval(updateMenu, 300000);
+    // Update menu every 5 minutes
+    setInterval(() => {
+      console.log('⏰ Periodic menu update');
+      updateMenu();
+    }, 300000);
+    
+    console.log('🎉 Tray setup complete');
   } catch (error) {
-    console.error('Error creating tray:', error);
+    console.error('❌ Error creating tray:', error);
+    console.error('Stack trace:', error.stack);
+    
+    // Try to create a fallback tray with minimal setup
+    try {
+      console.log('🔄 Attempting fallback tray creation...');
+      const { nativeImage } = require('electron');
+      const emptyIcon = nativeImage.createEmpty();
+      tray = new Tray(emptyIcon);
+      tray.setToolTip('BOB (fallback)');
+      console.log('✅ Fallback tray created');
+    } catch (fallbackError) {
+      console.error('❌ Fallback tray creation also failed:', fallbackError);
+    }
   }
 }
 

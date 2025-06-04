@@ -48,15 +48,19 @@ if (process.env.NODE_ENV === 'development') {
 
 // Application initialization
 app.whenReady().then(() => {
+  console.log('🚀 App ready, initializing...');
   initDatabase(() => {
+    console.log('💾 Database initialized, creating tray...');
     createTray();
     // Initialize API server
     if (process.env.ENABLE_API_SERVER !== 'false') {
+      console.log('🌐 Starting API server...');
       initApiServer();
     }
     
     // Setup IPC handlers
     setupIpcHandlers();
+    console.log('✅ App initialization complete');
   });
 });
 
