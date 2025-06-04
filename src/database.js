@@ -55,14 +55,40 @@ function initDatabase(callback) {
       clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Legacy stories table (keeping for migration)
+    // Main stories table (consolidated from old links table)
     db.run(`CREATE TABLE IF NOT EXISTS stories (
-      story_id INTEGER PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      story_id INTEGER NOT NULL,
       title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      comments_url TEXT,
+      source TEXT NOT NULL,
       points INTEGER,
       comments INTEGER,
-      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+      viewed BOOLEAN DEFAULT FALSE,
+      viewed_at DATETIME,
+      engaged BOOLEAN DEFAULT FALSE,
+      engaged_at DATETIME,
+      engagement_count INTEGER DEFAULT 0,
+      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      times_appeared INTEGER DEFAULT 1,
+      archive_url TEXT
+    )`, () => {});
+    
+    // New normalized tags table
+    db.run(`CREATE TABLE IF NOT EXISTS tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      story_id INTEGER NOT NULL,
+      tag TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (story_id) REFERENCES stories(id),
+      UNIQUE(story_id, tag)
+    )`, () => {});
+    
+    // Create index for fast tag lookups
+    db.run(`CREATE INDEX IF NOT EXISTS idx_tags_story_id ON tags(story_id)`, () => {});
+    db.run(`CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)`, () => {});
     
     // Create articles table for saved content
     db.run(`CREATE TABLE IF NOT EXISTS articles (
@@ -115,54 +141,36 @@ function initDatabase(callback) {
       VALUES (new.id, new.title, new.author, new.text_content, new.tags);
     END`);
     
+    // Migration: Copy data from links table to new stories table if needed
+    db.run(`INSERT OR IGNORE INTO stories (story_id, title, url, comments_url, source, points, comments, 
+            viewed, viewed_at, engaged, engaged_at, engagement_count, first_seen_at, last_seen_at, times_appeared)
+            SELECT story_id, title, url, comments_url, source, points, comments, 
+            viewed, viewed_at, engaged, engaged_at, engagement_count, first_seen_at, last_seen_at, times_appeared
+            FROM links WHERE EXISTS (SELECT name FROM sqlite_master WHERE type='table' AND name='links')`, () => {});
+    
+    // Migration: Extract tags from old stories/links tables into new tags table
+    db.all(`SELECT id, story_id, tags FROM stories WHERE tags IS NOT NULL AND tags != ''`, [], (err, rows) => {
+      if (!err && rows) {
+        rows.forEach(row => {
+          if (row.tags) {
+            const tags = row.tags.split(',').map(tag => tag.trim()).filter(tag => tag);
+            tags.forEach(tag => {
+              db.run(`INSERT OR IGNORE INTO tags (story_id, tag) VALUES (?, ?)`, [row.id, tag]);
+            });
+          }
+        });
+      }
+    });
+    
+    // Legacy table support - keep old columns for migration
     db.run(`ALTER TABLE clicks ADD COLUMN points INTEGER`, () => {});
     db.run(`ALTER TABLE clicks ADD COLUMN comments INTEGER`, () => {});
     db.run(`ALTER TABLE clicks ADD COLUMN story_added_at DATETIME`, () => {});
-    
-    // Add archive URL columns to existing tables
     db.run(`ALTER TABLE clicks ADD COLUMN archive_url TEXT`, () => {});
-    db.run(`ALTER TABLE stories ADD COLUMN url TEXT`, () => {});
-    db.run(`ALTER TABLE stories ADD COLUMN archive_url TEXT`, () => {});
-    db.run(`ALTER TABLE stories ADD COLUMN tags TEXT`, () => {});
     db.run(`ALTER TABLE clicks ADD COLUMN tags TEXT`, () => {});
-    db.run(`ALTER TABLE stories ADD COLUMN impression_count INTEGER DEFAULT 0`, () => {});
-    
-    // Add comments URL columns for Reddit and HN posts
     db.run(`ALTER TABLE clicks ADD COLUMN comments_url TEXT`, () => {});
-    db.run(`ALTER TABLE stories ADD COLUMN comments_url TEXT`, () => {});
-    
-    // Add new columns to existing clicks table for new schema
     db.run(`ALTER TABLE clicks ADD COLUMN link_id INTEGER`, () => {});
     db.run(`ALTER TABLE clicks ADD COLUMN click_type TEXT`, () => {});
-    
-    // Create new links table if it doesn't exist (migration safe)
-    db.run(`CREATE TABLE IF NOT EXISTS links (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      story_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      url TEXT NOT NULL,
-      comments_url TEXT,
-      source TEXT NOT NULL,
-      points INTEGER,
-      comments INTEGER,
-      viewed BOOLEAN DEFAULT FALSE,
-      viewed_at DATETIME,
-      engaged BOOLEAN DEFAULT FALSE,
-      engaged_at DATETIME,
-      engagement_count INTEGER DEFAULT 0,
-      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      times_appeared INTEGER DEFAULT 1,
-      tags TEXT
-    )`, () => {});
-    
-    // Add engagement columns to existing links table
-    db.run(`ALTER TABLE links ADD COLUMN engaged BOOLEAN DEFAULT FALSE`, () => {});
-    db.run(`ALTER TABLE links ADD COLUMN engaged_at DATETIME`, () => {});
-    db.run(`ALTER TABLE links ADD COLUMN engagement_count INTEGER DEFAULT 0`, () => {});
-    
-    // Create unique index on URL to prevent duplicates
-    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_url ON stories(url)`, () => {});
     
     // Add new columns to articles table for existing databases
     db.run(`ALTER TABLE articles ADD COLUMN domain TEXT`, () => {});
@@ -213,8 +221,10 @@ function saveArchiveUrl(storyId, originalUrl, archiveUrl, source) {
       }
     });
     
-  // Also save to clicks table for this specific click
-  db.run(`UPDATE clicks SET archive_url = ? WHERE story_id = ? ORDER BY clicked_at DESC LIMIT 1`, 
+  // Also save to clicks table for the most recent click
+  db.run(`UPDATE clicks SET archive_url = ? WHERE id = (
+    SELECT id FROM clicks WHERE story_id = ? ORDER BY clicked_at DESC LIMIT 1
+  )`, 
     [archiveUrl, storyId], (err) => {
       if (err) {
         console.error('Error saving archive URL to clicks:', err);
@@ -474,8 +484,8 @@ function addTagToStory(storyId, tag) {
       normalizedStoryId = hashStringToInt(storyId);
     }
     
-    // Get current tags for the story
-    db.get('SELECT tags FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
+    // Get current tags for the story from links table
+    db.get('SELECT tags FROM links WHERE story_id = ?', [normalizedStoryId], (err, row) => {
       if (!err) {
         let currentTags = [];
         if (row && row.tags) {
@@ -487,19 +497,63 @@ function addTagToStory(storyId, tag) {
           currentTags.push(cleanTag);
           const updatedTags = currentTags.join(',');
           
-          db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [updatedTags, normalizedStoryId], (err) => {
-            if (err) {
-              console.error('Error adding tag to stories:', err);
-            }
-          });
-          
-          // Also update the links table for consistency
+          // Update the links table
           db.run('UPDATE links SET tags = ? WHERE story_id = ?', [updatedTags, normalizedStoryId], (err) => {
             if (err) {
               console.error('Error adding tag to links:', err);
+            } else {
+              console.log(`✅ Tag "${cleanTag}" added to story ${normalizedStoryId} in links table`);
             }
           });
+        } else {
+          console.log(`⚠️ Tag "${cleanTag}" already exists for story ${normalizedStoryId}`);
         }
+      } else {
+        console.warn(`⚠️ Story ${normalizedStoryId} not found in links table for tagging`);
+      }
+    });
+  }
+}
+
+function addMultipleTagsToStory(storyId, tags) {
+  if (db && tags && tags.length > 0) {
+    // Convert story ID to integer - use hash for string IDs
+    let normalizedStoryId;
+    if (typeof storyId === 'number') {
+      normalizedStoryId = storyId;
+    } else {
+      normalizedStoryId = hashStringToInt(storyId);
+    }
+    
+    // Get current tags for the story from links table
+    db.get('SELECT tags FROM links WHERE story_id = ?', [normalizedStoryId], (err, row) => {
+      if (!err) {
+        let currentTags = [];
+        if (row && row.tags) {
+          currentTags = row.tags.split(',').map(t => t.trim()).filter(t => t);
+        }
+        
+        // Add all new tags that aren't already present
+        const cleanTags = tags.map(tag => tag.trim().toLowerCase()).filter(tag => tag);
+        const newTags = cleanTags.filter(tag => !currentTags.includes(tag));
+        
+        if (newTags.length > 0) {
+          const allTags = [...currentTags, ...newTags];
+          const updatedTags = allTags.join(',');
+          
+          // Update the links table
+          db.run('UPDATE links SET tags = ? WHERE story_id = ?', [updatedTags, normalizedStoryId], (err) => {
+            if (err) {
+              console.error('Error adding tags to links:', err);
+            } else {
+              console.log(`✅ Added ${newTags.length} tags to story ${normalizedStoryId}: ${newTags.join(', ')}`);
+            }
+          });
+        } else {
+          console.log(`⚠️ All tags already exist for story ${normalizedStoryId}`);
+        }
+      } else {
+        console.warn(`⚠️ Story ${normalizedStoryId} not found in links table for tagging`);
       }
     });
   }
@@ -515,12 +569,25 @@ function getStoryTags(storyId, callback) {
       normalizedStoryId = hashStringToInt(storyId);
     }
     
-    db.get('SELECT tags FROM stories WHERE story_id = ?', [normalizedStoryId], (err, row) => {
+    // Get the internal story ID first
+    db.get('SELECT id FROM stories WHERE story_id = ?', [normalizedStoryId], (err, storyRow) => {
       if (err) {
         callback(err, []);
+        return;
+      }
+      
+      if (storyRow) {
+        // Get tags from normalized tags table
+        db.all('SELECT tag FROM tags WHERE story_id = ? ORDER BY created_at', [storyRow.id], (err, tagRows) => {
+          if (err) {
+            callback(err, []);
+          } else {
+            const tags = tagRows.map(row => row.tag);
+            callback(null, tags);
+          }
+        });
       } else {
-        const tags = row && row.tags ? row.tags.split(',').map(t => t.trim()).filter(t => t) : [];
-        callback(null, tags);
+        callback(null, []);
       }
     });
   } else {
@@ -859,5 +926,6 @@ module.exports = {
   getDatabase,
   clearModuleCache,
   clearAllData,
-  clearAllTags
+  clearAllTags,
+  addMultipleTagsToStory
 };

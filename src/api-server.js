@@ -302,11 +302,11 @@ function initApiServer() {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
-    // Query to get all tags and their occurrence counts from the stories table
+    // Query to get all tags and their occurrence counts from the links table
     db.all(`SELECT 
       tags,
       COUNT(*) as count
-    FROM stories 
+    FROM links 
     WHERE tags IS NOT NULL AND tags != ''
     GROUP BY tags
     ORDER BY count DESC, tags ASC`, [], (err, rows) => {

@@ -37,13 +37,16 @@ async function autoGenerateAndApplyTags(storyId, title, url, source) {
     const result = await generateTagSuggestions(title, url);
     
     if (result.success && result.tags.length > 0) {
-      // Apply all suggested tags automatically
-      const { addTagToStory, trackEngagement } = require('./database');
+      // Apply all suggested tags automatically in one operation
+      const { addMultipleTagsToStory, trackEngagement } = require('./database');
       
+      // Log individual tags for visibility
       result.tags.forEach(tag => {
-        addTagToStory(storyId, tag);
         console.log(`🏷️ Auto-applied tag: ${tag}`);
       });
+      
+      // Add all tags at once to avoid race conditions
+      addMultipleTagsToStory(storyId, result.tags);
       
       // Track engagement for AI tagging
       trackEngagement(storyId, source);

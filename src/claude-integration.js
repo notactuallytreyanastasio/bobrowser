@@ -74,7 +74,7 @@ async function generateTagSuggestions(title, url = null) {
     }
 
     // Construct the prompt for Claude
-    const prompt = `Based on this article title${url ? ' and URL' : ''}, suggest 5-8 relevant tags that would help categorize and find this content later. 
+    const prompt = `Based on this article title${url ? ' and URL' : ''}, suggest 4-6 relevant tags that would help categorize and find this content later.
 
 Title: "${title}"${url ? `\nURL: ${url}` : ''}
 
@@ -83,11 +83,12 @@ Please provide tags that are:
 - Useful for categorization
 - Common enough to group similar articles
 - A mix of topics, technologies, and themes
+- NOT synonyms with one another
 
 Return only the tags as a comma-separated list, no explanations.`;
 
     console.log('🤖 Generating Claude AI tag suggestions for:', title);
-    
+
     // Try to use Claude Desktop API first
     try {
       console.log('🚀 Attempting Claude Desktop API call...');
@@ -101,7 +102,7 @@ Return only the tags as a comma-separated list, no explanations.`;
     } catch (claudeError) {
       console.log('❌ Claude Desktop API failed:', claudeError.message);
     }
-    
+
     // Fallback to mock if Claude fails
     console.log('🔄 Using mock suggestions as fallback');
     const mockSuggestions = await generateMockSuggestions(title);
@@ -110,7 +111,7 @@ Return only the tags as a comma-separated list, no explanations.`;
       tags: mockSuggestions,
       source: 'mock-fallback'
     };
-    
+
   } catch (error) {
     console.error('Error generating tag suggestions:', error);
     return {
@@ -127,7 +128,7 @@ Return only the tags as a comma-separated list, no explanations.`;
 async function callClaudeDesktop(prompt) {
   return new Promise(async (resolve, reject) => {
     // Try multiple methods to communicate with Claude Desktop
-    
+
     // Method 1: Try HTTP API first (if Claude Desktop exposes one)
     try {
       console.log('🌐 Trying Claude HTTP API...');
@@ -140,16 +141,16 @@ async function callClaudeDesktop(prompt) {
     } catch (apiError) {
       console.log('❌ Claude HTTP API failed:', apiError.message);
     }
-    
+
     // Method 2: Try using claude CLI command if available
     const { exec } = require('child_process');
-    
+
     // Escape the prompt for shell command
     const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/\n/g, '\\n');
-    
+
     // Try claude CLI
     console.log('💻 Trying Claude CLI...');
-    exec(`echo "${escapedPrompt}" | claude --print --output-format=text`, { 
+    exec(`echo "${escapedPrompt}" | claude --print --output-format=text`, {
       timeout: 15000, // 15 second timeout
       maxBuffer: 1024 * 1024 // 1MB buffer
     }, (error, stdout, stderr) => {
@@ -188,12 +189,12 @@ async function callClaudeDesktop(prompt) {
 async function tryClaudeHttpAPI(prompt) {
   return new Promise((resolve, reject) => {
     const axios = require('axios');
-    
+
     // Common ports that Claude Desktop might use
     const possiblePorts = [3000, 8080, 9000, 52000, 52001];
-    
+
     let attemptCount = 0;
-    
+
     const tryPort = (port) => {
       axios.post(`http://localhost:${port}/api/chat`, {
         message: prompt,
@@ -231,7 +232,7 @@ async function tryClaudeHttpAPI(prompt) {
         }
       });
     };
-    
+
     tryPort(possiblePorts[0]);
   });
 }
@@ -241,7 +242,7 @@ async function tryClaudeHttpAPI(prompt) {
  */
 function tryClaudeDesktopAppleScript(prompt, resolve, reject) {
   const { exec } = require('child_process');
-  
+
   // First check if Claude app is running
   exec('osascript -e \'tell application "System Events" to return name of every application process\'', (checkError, processes) => {
     if (checkError || !processes.includes('Claude')) {
@@ -249,44 +250,44 @@ function tryClaudeDesktopAppleScript(prompt, resolve, reject) {
       reject(new Error('Claude Desktop app is not running'));
       return;
     }
-    
+
     // Clean prompt for AppleScript
     const cleanPrompt = prompt
       .replace(/"/g, '\\"')
       .replace(/\n/g, '\\n')
       .substring(0, 500); // Limit length to avoid issues
-    
+
     // AppleScript to interact with Claude Desktop
     const appleScript = `
       tell application "Claude"
         activate
       end tell
-      
+
       delay 1
-      
+
       tell application "System Events"
         tell process "Claude"
           -- Clear any existing text
           keystroke "a" using command down
           keystroke "${cleanPrompt}"
-          
+
           -- Send the message
           key code 36
-          
+
           -- Wait for response
           delay 3
-          
+
           -- Try to select and copy the response
           keystroke "a" using command down
           keystroke "c" using command down
-          
+
           delay 0.5
         end tell
       end tell
-      
+
       return the clipboard
     `;
-    
+
     exec(`osascript -e '${appleScript}'`, { timeout: 25000 }, (error, stdout, stderr) => {
       if (error) {
         console.log('AppleScript method failed:', error.message);
@@ -315,31 +316,31 @@ function parseClaudeResponse(response) {
   if (!response || typeof response !== 'string') {
     throw new Error('Invalid Claude response');
   }
-  
+
   // Clean up the response
   let cleanResponse = response.trim();
-  
+
   // Remove any markdown formatting
   cleanResponse = cleanResponse.replace(/```[\s\S]*?```/g, '');
   cleanResponse = cleanResponse.replace(/`([^`]+)`/g, '$1');
-  
+
   // Look for comma-separated tags
   let tags = [];
-  
+
   // Try to find a line that looks like comma-separated tags
   const lines = cleanResponse.split('\n');
   for (const line of lines) {
     const trimmedLine = line.trim();
-    
+
     // Skip empty lines and lines that look like explanatory text
-    if (!trimmedLine || 
+    if (!trimmedLine ||
         trimmedLine.toLowerCase().includes('here are') ||
         trimmedLine.toLowerCase().includes('based on') ||
         trimmedLine.toLowerCase().includes('suggested tags') ||
         trimmedLine.length > 200) {
       continue;
     }
-    
+
     // Check if this line contains comma-separated words
     if (trimmedLine.includes(',')) {
       const potentialTags = trimmedLine.split(',')
@@ -347,14 +348,14 @@ function parseClaudeResponse(response) {
         .filter(tag => tag.length > 0 && tag.length < 30)
         .filter(tag => !/[.!?]/.test(tag)) // Filter out sentences
         .slice(0, 8); // Max 8 tags
-      
+
       if (potentialTags.length >= 2) {
         tags = potentialTags;
         break;
       }
     }
   }
-  
+
   // If no comma-separated tags found, try to extract individual words
   if (tags.length === 0) {
     const words = cleanResponse.toLowerCase()
@@ -362,17 +363,17 @@ function parseClaudeResponse(response) {
       .split(/\s+/)
       .filter(word => word.length > 2 && word.length < 20)
       .slice(0, 6);
-    
+
     if (words.length > 0) {
       tags = words;
     }
   }
-  
+
   // Fallback: if still no tags, throw error
   if (tags.length === 0) {
     throw new Error('No valid tags found in Claude response');
   }
-  
+
   return tags;
 }
 
@@ -383,7 +384,7 @@ async function generateMockSuggestions(title) {
   // Simple keyword-based mock suggestions for development
   const titleLower = title.toLowerCase();
   const mockTags = [];
-  
+
   // Technology tags
   if (titleLower.includes('ai') || titleLower.includes('artificial intelligence')) {
     mockTags.push('ai', 'machine-learning');
@@ -397,7 +398,7 @@ async function generateMockSuggestions(title) {
   if (titleLower.includes('react') || titleLower.includes('vue') || titleLower.includes('angular')) {
     mockTags.push('frontend', 'web-frameworks');
   }
-  
+
   // General topic tags
   if (titleLower.includes('startup') || titleLower.includes('business')) {
     mockTags.push('business', 'startup');
@@ -408,10 +409,10 @@ async function generateMockSuggestions(title) {
   if (titleLower.includes('design') || titleLower.includes('ui') || titleLower.includes('ux')) {
     mockTags.push('design', 'user-experience');
   }
-  
+
   // Add some general tags
   mockTags.push('tech', 'interesting');
-  
+
   // Remove duplicates and limit to 6 tags
   return [...new Set(mockTags)].slice(0, 6);
 }
@@ -517,7 +518,7 @@ function showTagSuggestionWindow(storyId, title, url, source) {
           Generating tags...
         </div>
       </div>
-      
+
       <div class="buttons">
         <button class="btn btn-secondary" onclick="window.close()">Cancel</button>
         <button class="btn btn-primary" id="applyBtn" onclick="applySelectedTags()" disabled>Apply</button>
@@ -528,7 +529,7 @@ function showTagSuggestionWindow(storyId, title, url, source) {
         let selectedTags = new Set();
         let storyId = ${storyId};
         let storySource = '${source}';
-        
+
         // Generate tag suggestions when window loads
         window.addEventListener('DOMContentLoaded', () => {
           // Request tag suggestions from main process
@@ -537,7 +538,7 @@ function showTagSuggestionWindow(storyId, title, url, source) {
             url: '${url || ''}'
           });
         });
-        
+
         // Listen for tag suggestions from main process
         ipcRenderer.on('tags-generated', (event, result) => {
           if (result.success) {
@@ -546,29 +547,29 @@ function showTagSuggestionWindow(storyId, title, url, source) {
             showError('Failed to generate tag suggestions: ' + (result.error || 'Unknown error'));
           }
         });
-        
+
         function displayTagSuggestions(tags) {
           const content = document.getElementById('content');
-          
+
           if (tags.length === 0) {
             content.innerHTML = '<div class="error">No tags generated</div>';
             return;
           }
-          
-          const tagsHtml = tags.map(tag => 
+
+          const tagsHtml = tags.map(tag =>
             \`<span class="tag-suggestion" onclick="toggleTag('\${tag}')">\${tag}</span>\`
           ).join('');
-          
+
           content.innerHTML = \`
             <div class="tags-container">
               \${tagsHtml}
             </div>
           \`;
         }
-        
+
         function toggleTag(tag) {
           const tagElement = event.target;
-          
+
           if (selectedTags.has(tag)) {
             selectedTags.delete(tag);
             tagElement.classList.remove('selected');
@@ -576,28 +577,28 @@ function showTagSuggestionWindow(storyId, title, url, source) {
             selectedTags.add(tag);
             tagElement.classList.add('selected');
           }
-          
+
           // Update apply button state
           const applyBtn = document.getElementById('applyBtn');
           applyBtn.disabled = selectedTags.size === 0;
         }
-        
+
         function applySelectedTags() {
           if (selectedTags.size === 0) return;
-          
+
           const tagsArray = Array.from(selectedTags);
           console.log('Applying tags:', tagsArray, 'to story:', storyId);
-          
+
           // Send message to main process to apply tags
           ipcRenderer.send('apply-ai-tags', {
             storyId: storyId,
             source: storySource,
             tags: tagsArray
           });
-          
+
           window.close();
         }
-        
+
         function showError(message) {
           document.getElementById('content').innerHTML = \`
             <div class="error">\${message}</div>
@@ -609,10 +610,10 @@ function showTagSuggestionWindow(storyId, title, url, source) {
   `;
 
   win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-  
+
   // Handle IPC events
   const { ipcMain } = require('electron');
-  
+
   // Handle tag generation request
   ipcMain.removeAllListeners('generate-tags');
   ipcMain.on('generate-tags', async (event, data) => {
@@ -627,22 +628,22 @@ function showTagSuggestionWindow(storyId, title, url, source) {
       });
     }
   });
-  
+
   // Handle tag application
   ipcMain.removeAllListeners('apply-ai-tags');
   ipcMain.on('apply-ai-tags', (event, data) => {
     console.log('Applying AI-generated tags:', data);
-    
+
     // Apply each tag to the story
     const { addTagToStory, trackEngagement } = require('./database');
-    
+
     data.tags.forEach(tag => {
       addTagToStory(data.storyId, tag);
     });
-    
+
     // Track engagement for using AI tags
     trackEngagement(data.storyId, data.source);
-    
+
     // Refresh the menu to show updated tags
     const { updateMenu } = require('./menu');
     setTimeout(updateMenu, 100);
