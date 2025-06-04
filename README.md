@@ -1,41 +1,73 @@
-# BOB - Reading Tracker & Story Aggregator
+# BOBrowser
+A Bob browser. I dont know, its a batching of links from places I am likely to click.
 
-A macOS menu bar application that aggregates stories from Hacker News, Reddit, and Pinboard, while tracking your reading patterns and providing offline article storage.
+It presents itself as a simple tray icon in the system bar.
 
-## Features
+AI tags the stories you click for later reference.
 
-- 📰 **Multi-Source Aggregation** - Hacker News, Reddit, and Pinboard stories in one place
-- 📊 **Reading Analytics** - Track clicks, story impressions, and reading patterns  
-- 🔖 **Story Tagging** - Organize stories with custom tags
-- 💾 **Offline Storage** - Save articles for offline reading
-- 🌐 **API Server** - HTTP/HTTPS endpoints for external integrations
-- 🎯 **Menu Bar Access** - Quick access via macOS system tray
+Once clicked, you get some reading.
 
-## Quick Start
+But there is more:
 
+There is also a full archival system, link tagging, browsing of links, and browsing of tags.
+
+It also tracks reading and impression history
+
+### One-Click Everything
+A single click opens everything: a page to archive the content, the comments section, and the article itself.
+
+When an article is clicked, claude will tag it for you.
+
+This is done with some generic string matching if you dont have claude available as a CLI tool.
+
+### 📚 Comprehensive Archiving
+Automatic archive.ph integration on every click.
+
+The archival URLs are stored to the DB for easy reference, too.
+
+### 📊 Advanced Tracking
+- **Comprehensive database** tracking all interactions
+- **Link appearances** vs **actual clicks** differentiation
+- **Source attribution** (HN, Reddit, Pinboard, Search)
+- **Archive URL persistence** for future reference
+
+### 🔍 Smart Search & Filtering
+- **Tag-based search** across all tracked stories
+- **Database browser** with filtering options (Gems, Unread, Recent, All)
+- **Time-based filtering** (1 day, 1 week, 1 month)
+- **Cross-platform story discovery**
+
+## 🛠️ Installation
+
+### Prerequisites
+- macOS
+- Node.js (v20+)
+- **Claude Desktop** (for AI tagging) - [Download here](https://claude.ai/download)
+- **Claude Code (CLI)** (for AI tagging) - [Download here](https://www.anthropic.com/claude-code)
+
+### Setup
 ```bash
+# Clone the repository
+git clone [repository-url]
+cd mac_hn
+
 # Install dependencies
 npm install
 
 # Start the application
 npm start
+
+# For development with hot reload
+npm run dev
 ```
 
-The menu bar icon will appear in your system tray. Right-click to access stories from different sources.
-
-## Setup
-
-### Basic Installation
-
-```bash
-git clone <this-repo>
-cd mac_hn
-npm install
-npm start
-```
+### Claude Desktop Integration
+1. Install Claude Desktop from [claude.ai/download](https://claude.ai/download)
+2. Ensure Claude CLI is available in your PATH
+3. The app will automatically detect and use Claude for AI tagging
+4. If Claude is unavailable, falls back to keyword-based tagging
 
 ### Reddit Integration (Optional)
-
 For Reddit stories, you'll need API credentials:
 
 1. Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)
@@ -46,113 +78,59 @@ For Reddit stories, you'll need API credentials:
 ```env
 REDDIT_CLIENT_ID=your_client_id
 REDDIT_CLIENT_SECRET=your_client_secret
-REDDIT_SUBREDDITS=news,programming,technology  # optional
 ```
 
 Or use the setup dialog that appears when first starting without credentials.
 
-#### Configuring Subreddits
+## 📖 Usage
 
-You can configure which subreddits to fetch stories from in two ways:
+### Basic Operation
+1. **Click the menu bar icon** to see aggregated stories
+2. **Click any story** to automatically:
+   - Archive the content via archive.ph
+   - Open comments/discussion
+   - Open the original article
+   - Generate and apply AI tags
 
-1. **Environment variable** - Add to your `.env` file:
-   ```env
-   REDDIT_SUBREDDITS=news,programming,technology
-   ```
+### Story Sources
+- **🟠 Hacker News**: Top stories with discussion links (12 stories)
+- **👽 Reddit**: Configurable subreddits with comment threads (14 stories)  
+- **📌 Pinboard**: Popular bookmarks from the community (11 stories)
 
-2. **Edit config file** - Modify the hardcoded list in `src/config.js:12-14`
+### Database Browser
+- Access via menu: `🗄️ Database Browser`
+- **💎 Gems**: Hidden gems with low appearance rates
+- **📖 Unread**: Stories you haven't clicked yet
+- **🕒 Recent**: Recently clicked articles
+- **📋 All**: Complete link database
+
+### Search Functionality
+- Use `🔍 Search by Tags` to find specific stories
+- Supports comma-separated tag queries: `ai,programming`
+- Search results show all matching stories with their tags
+
+## ⚙️ Configuration
+
+### Reddit Subreddits
+Edit `src/config.js` to customize Reddit sources:
+```javascript
+const DEFAULT_SUBREDDITS = [
+  'programming',
+  'technology', 
+  'MachineLearning',
+  // Add your preferred subreddits
+];
+```
 
 **Default subreddits:** news, television, elixir, aitah, bestofredditorupdates, explainlikeimfive
 
-### API Server (Optional)
-
-The app includes HTTP/HTTPS servers for external integrations:
-
-```bash
-# Generate SSL certificates for HTTPS support
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes \
-  -subj "/C=US/ST=State/L=City/O=BOB/CN=localhost"
-```
-
-Servers run on:
-- HTTP: `http://127.0.0.1:3002`
-- HTTPS: `https://127.0.0.1:3003`
-
-## Usage
-
-### Menu Bar Interface
-
-Right-click the BOB icon in your menu bar to access:
-
-- **Hacker News** - Latest HN stories
-- **Reddit** - Stories from configured subreddits  
-- **Pinboard** - Popular bookmarks
-- **Article Library** - Saved articles with search
-- **Reading Analytics** - View your reading patterns
-
-### Story Management
-
-- **Click stories** to open in your browser (automatically tracked)
-- **Tag stories** for organization
-- **Save articles** for offline reading
-- **Search saved content** via the Article Library
-
-### Command Line Tools
-
-```bash
-# Check saved articles
-node check-articles.js
-
-# Get latest article content  
-node get-latest-article.js
-
-# Open latest article in Safari
-node open-latest-article.js
-```
-
-## Technical Details
-
-### Architecture
-
-- **Electron** - Desktop application framework
-- **SQLite** - Local data storage with FTS5 search
-- **Express** - API server for external integrations
-- **Modular design** - Separated concerns across modules
-
-### Database Schema
-
-```sql
--- Story tracking
-CREATE TABLE stories (
-    story_id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
-    points INTEGER,
-    comments INTEGER,
-    first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Click analytics  
-CREATE TABLE clicks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    story_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    url TEXT NOT NULL,
-    clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Article storage (full-text searchable)
-CREATE VIRTUAL TABLE articles_fts USING fts5(...);
-```
-
-### Configuration
-
-Environment variables (`.env`):
+### Environment Variables
+Create a `.env` file for configuration:
 
 ```env
 # Reddit API
 REDDIT_CLIENT_ID=your_id
 REDDIT_CLIENT_SECRET=your_secret  
-REDDIT_SUBREDDITS=news,programming
 
 # Server settings
 API_PORT=3002
@@ -160,79 +138,49 @@ HTTPS_PORT=3003
 CACHE_DURATION=900000  # 15 minutes
 
 # Optional
-USER_AGENT=BOB-Reader/1.0
-ENABLE_API_SERVER=true
+USER_AGENT=MacHN-Reader/1.0
 ```
 
-## Development
+## 🗄️ Database Schema
 
-### Project Structure
+The app maintains a comprehensive SQLite database tracking:
+- **Links**: All stories with appearance counts and metadata
+- **Clicks**: User interactions with timestamps and context
+- **Archive URLs**: Preservation links for offline access
+- **Tags**: AI-generated and manual categorizations
 
+## 🔧 Development
+
+### Scripts
+```bash
+npm start          # Production mode
+npm run dev        # Development mode
+npm run hot        # Hot reload development
 ```
-mac_hn/
-├── main.js              # Electron entry point
-├── src/
-│   ├── api-server.js    # HTTP/HTTPS servers
-│   ├── api-sources.js   # HN/Reddit/Pinboard APIs
-│   ├── config.js        # Configuration
-│   ├── database.js      # SQLite operations
-│   ├── menu.js          # Tray menu management  
-│   └── ui.js            # User interface components
-├── package.json
-└── archives/            # Archived articles
-```
 
-### Adding Features
-
-**New Story Sources:**
-- Add fetch functions in `src/api-sources.js`
-- Update menu generation in `src/menu.js`
-
-**New UI Features:**
-- Add interface functions in `src/ui.js` 
-- Update menu items in `src/menu.js`
-
-**Database Changes:**
-- Modify schema in `src/database.js`
-- Add migration logic as needed
-
-### Development Mode
+### API Server (Optional)
+The app includes HTTP/HTTPS servers for database browser:
 
 ```bash
-# Run with hot reload
-npm run dev
-
-# Debug mode
-NODE_ENV=development npm start
+# Generate SSL certificates for HTTPS support
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes \
+  -subj "/C=US/ST=State/L=City/O=MacHN/CN=localhost"
 ```
 
-## API Endpoints
+Servers run on:
+- HTTP: `http://127.0.0.1:3002`
+- HTTPS: `https://127.0.0.1:3003`
+
+## 🔍 API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/ping` | Health check |
-| `POST` | `/api/articles` | Save article |
-| `GET` | `/api/articles` | List saved articles |
-| `GET` | `/api/articles/search?q=term` | Search articles |
-
-## Troubleshooting
-
-**Menu bar icon not appearing:**
-- Check macOS permissions for the app
-- Restart the application
-
-**Reddit stories not loading:**
-- Verify API credentials in `.env`
-- Check rate limiting (wait a few minutes)
-
-**Database errors:**
-- Stop app: `pkill -f electron`
-- Restart: `npm start`
-
-## License
-
-ISC License
-
----
-
-*BOB: Your personal reading command center* 📚
+| `GET` | `/database` | Database browser interface |
+| `GET` | `/api/database/clicks` | All click history |
+| `GET` | `/api/database/bag-of-links` | Hidden gems |
+| `GET` | `/api/database/unread` | Unread stories |
+| `GET` | `/api/database/recent` | Recently clicked |
+| `GET` | `/api/database/all` | All tracked links |
+| `GET` | `/api/database/tags` | All tags with occurrence counts |
+| `GET` | `/api/database/discover` | 25 random unclicked links from past week |
