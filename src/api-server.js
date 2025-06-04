@@ -223,6 +223,64 @@ function initApiServer() {
     });
   });
 
+  // Curated Bag - 3 unclicked links from each source with high show counts + 1 random
+  server.get('/api/database/curated-bag', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    // Simplified approach - get all unclicked links, then process them
+    db.all(`SELECT 
+      l.*,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id), 0) as total_clicks,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article'), 0) as article_clicks,
+      COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage'), 0) as engagements
+    FROM links l 
+    WHERE COALESCE((SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article'), 0) = 0
+    ORDER BY l.times_appeared DESC`, [], (err, rows) => {
+      if (err) {
+        console.error('Error in curated bag query:', err);
+        return res.status(500).json({ error: err.message });
+      }
+
+      try {
+        // Group by source
+        const bySource = {
+          hn: rows.filter(r => r.source === 'hn').slice(0, 3),
+          reddit: rows.filter(r => r.source === 'reddit').slice(0, 3),
+          pinboard: rows.filter(r => r.source === 'pinboard').slice(0, 3)
+        };
+
+        // Get 1 random from all unclicked
+        const randomLink = rows[Math.floor(Math.random() * rows.length)];
+
+        // Combine all links
+        let allLinks = [...bySource.hn, ...bySource.reddit, ...bySource.pinboard];
+        if (randomLink && !allLinks.find(link => link.id === randomLink.id)) {
+          allLinks.push(randomLink);
+        }
+
+        // Remove source information and randomize order for presentation
+        const processedLinks = allLinks.map(link => {
+          const { source, ...linkWithoutSource } = link;
+          return linkWithoutSource;
+        });
+
+        // Shuffle the array to mix sources randomly
+        for (let i = processedLinks.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [processedLinks[i], processedLinks[j]] = [processedLinks[j], processedLinks[i]];
+        }
+
+        res.json({ links: processedLinks });
+      } catch (error) {
+        console.error('Error processing curated bag:', error);
+        res.status(500).json({ error: 'Error processing results' });
+      }
+    });
+  });
+
   // Unread stories
   server.get('/api/database/unread', (req, res) => {
     const db = getDatabase();

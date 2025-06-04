@@ -879,6 +879,7 @@ function showDatabaseBrowser() {
       </head>
       <body>
         <div class="controls">
+          <button class="btn" onclick="loadCuratedBag()">🎲 BAG OF LINKS</button>
           <button class="btn" onclick="loadBagOfLinks()">💎 Gems</button>
           <button class="btn" onclick="loadUnread()">📖 Unread</button>
           <button class="btn" onclick="loadRecent()">🕒 Recent</button>
@@ -1005,12 +1006,15 @@ function showDatabaseBrowser() {
               return;
             }
             
+            // Hide source column for curated mix to keep things mysterious
+            const hideSource = title === 'Curated Mix';
+            
             const tableHtml = \`
               <table>
                 <thead>
                   <tr>
                     <th>Title</th>
-                    <th>Source</th>
+                    \${hideSource ? '' : '<th>Source</th>'}
                     <th>Stats</th>
                     <th>Last Seen</th>
                   </tr>
@@ -1024,14 +1028,15 @@ function showDatabaseBrowser() {
                     return \`
                       <tr>
                         <td>
-                          <a href="#" onclick="openLink('\${link.url}', '\${link.story_id}', '\${link.source}', '\${link.title.replace(/'/g, "\\'")}')\" class="title-link \${titleClass}">
+                          <a href="#" onclick="openLink('\${link.url}', '\${link.story_id}', '\${link.source || 'unknown'}', '\${link.title.replace(/'/g, "\\'")}')\" class="title-link \${titleClass}">
                             \${truncateTitle(link.title)}
                           </a>
-                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}', '\${link.story_id}', '\${link.source}', '\${link.title.replace(/'/g, "\\'")}')\" class="comments-link">[comments]</a>\` : ''}
+                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}', '\${link.story_id}', '\${link.source || 'unknown'}', '\${link.title.replace(/'/g, "\\'")}')\" class="comments-link">[comments]</a>\` : ''}
                         </td>
+                        \${hideSource ? '' : \`
                         <td>
                           <span class="source-badge \${sourceClass}">\${link.source || 'unknown'}</span>
-                        </td>
+                        </td>\`}
                         <td>
                           <div class="stats">
                             \${link.total_clicks > 0 ? \`<span class="stat">\${link.total_clicks} clicks</span>\` : ''}
@@ -1106,6 +1111,13 @@ function showDatabaseBrowser() {
           function filterByTag(tag) {
             // For now, just show an alert - you could implement tag filtering here
             alert(\`Filtering by tag: \${tag}\`);
+          }
+          
+          async function loadCuratedBag() {
+            setActiveButton(event.target);
+            showLoading();
+            const links = await fetchData('/api/database/curated-bag');
+            renderResults(links, 'Curated Mix');
           }
           
           async function loadBagOfLinks() {
@@ -1240,12 +1252,15 @@ function showDatabaseBrowser() {
               return;
             }
             
+            // Hide source column for curated mix to keep things mysterious
+            const hideSource = title.includes('Curated Mix');
+            
             const tableHtml = \`
               <table>
                 <thead>
                   <tr>
                     <th>Title</th>
-                    <th>Source</th>
+                    \${hideSource ? '' : '<th>Source</th>'}
                     <th>Stats</th>
                     <th>Last Seen</th>
                   </tr>
@@ -1259,14 +1274,15 @@ function showDatabaseBrowser() {
                     return \`
                       <tr>
                         <td>
-                          <a href="#" onclick="openLink('\${link.url}')" class="title-link \${titleClass}">
+                          <a href="#" onclick="openLink('\${link.url}', '\${link.story_id}', '\${link.source || 'unknown'}', '\${link.title.replace(/'/g, "\\'")}')\" class="title-link \${titleClass}">
                             \${truncateTitle(link.title)}
                           </a>
-                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}')" class="comments-link">[comments]</a>\` : ''}
+                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}', '\${link.story_id}', '\${link.source || 'unknown'}', '\${link.title.replace(/'/g, "\\'")}')\" class="comments-link">[comments]</a>\` : ''}
                         </td>
+                        \${hideSource ? '' : \`
                         <td>
                           <span class="source-badge \${sourceClass}">\${link.source || 'unknown'}</span>
-                        </td>
+                        </td>\`}
                         <td>
                           <div class="stats">
                             \${link.total_clicks > 0 ? \`<span class="stat">\${link.total_clicks} clicks</span>\` : ''}
