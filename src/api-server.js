@@ -566,6 +566,137 @@ function initApiServer() {
       .catch(err => res.status(500).json({ error: err.message }));
   });
 
+  server.post('/api/background-tagging/retag-all', (req, res) => {
+    const { retagAllStories } = require('./background-tagger');
+    retagAllStories()
+      .then((result) => res.json({ success: true, message: 'Re-tagging all stories started', ...result }))
+      .catch(err => res.status(500).json({ error: err.message }));
+  });
+
+  // Debug/Pulse check endpoint
+  server.get('/api/debug/pulse-check', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    // Get all stats in parallel
+    const queries = [
+      // Top 10 tags
+      new Promise((resolve) => {
+        db.all(`SELECT 
+          tags,
+          COUNT(*) as story_count
+        FROM links 
+        WHERE tags IS NOT NULL AND tags != ''
+        GROUP BY tags
+        ORDER BY story_count DESC
+        LIMIT 20`, [], (err, rows) => {
+          if (err) {
+            resolve([]);
+          } else {
+            // Parse comma-separated tags and aggregate
+            const tagCounts = {};
+            rows.forEach(row => {
+              if (row.tags) {
+                const tags = row.tags.split(',').map(tag => tag.trim()).filter(tag => tag);
+                tags.forEach(tag => {
+                  tagCounts[tag] = (tagCounts[tag] || 0) + row.story_count;
+                });
+              }
+            });
+            const sortedTags = Object.entries(tagCounts)
+              .map(([tag, count]) => ({ tag, count }))
+              .sort((a, b) => b.count - a.count)
+              .slice(0, 10);
+            resolve(sortedTags);
+          }
+        });
+      }),
+
+      // Top 5 clicked links
+      new Promise((resolve) => {
+        db.all(`SELECT 
+          c.title,
+          COUNT(*) as click_count
+        FROM clicks c
+        GROUP BY c.story_id, c.title
+        ORDER BY click_count DESC
+        LIMIT 5`, [], (err, rows) => {
+          resolve(err ? [] : rows);
+        });
+      }),
+
+      // Top 5 viewed links
+      new Promise((resolve) => {
+        db.all(`SELECT 
+          title,
+          times_appeared as view_count
+        FROM links 
+        WHERE viewed = 1
+        ORDER BY times_appeared DESC
+        LIMIT 5`, [], (err, rows) => {
+          resolve(err ? [] : rows);
+        });
+      }),
+
+      // Overall stats
+      new Promise((resolve) => {
+        db.get(`SELECT 
+          COUNT(*) as total_links,
+          SUM(CASE WHEN tags IS NOT NULL AND tags != '' THEN 1 ELSE 0 END) as tagged_links,
+          SUM(CASE WHEN viewed = 1 THEN 1 ELSE 0 END) as viewed_links
+        FROM links`, [], (err, row) => {
+          resolve(err ? {} : row);
+        });
+      }),
+
+      // Click stats
+      new Promise((resolve) => {
+        db.get(`SELECT COUNT(*) as total_clicks FROM clicks`, [], (err, row) => {
+          resolve(err ? {} : row);
+        });
+      }),
+
+      // Source breakdown
+      new Promise((resolve) => {
+        db.all(`SELECT 
+          source,
+          COUNT(*) as count
+        FROM links 
+        GROUP BY source 
+        ORDER BY count DESC`, [], (err, rows) => {
+          resolve(err ? [] : rows);
+        });
+      })
+    ];
+
+    Promise.all(queries).then(([topTags, topClicked, topViewed, linkStats, clickStats, sources]) => {
+      const totalTags = topTags.length > 0 ? topTags.reduce((sum, tag) => sum + tag.count, 0) : 0;
+      const uniqueTags = topTags.length;
+
+      res.json({
+        topTags,
+        topClicked,
+        topViewed,
+        stats: {
+          totalLinks: linkStats.total_links || 0,
+          taggedLinks: linkStats.tagged_links || 0,
+          viewedLinks: linkStats.viewed_links || 0,
+          totalClicks: clickStats.total_clicks || 0,
+          uniqueTags: uniqueTags,
+          untaggedLinks: (linkStats.total_links || 0) - (linkStats.tagged_links || 0)
+        },
+        sources,
+        rates: {
+          clickRate: linkStats.total_links > 0 ? ((clickStats.total_clicks || 0) / linkStats.total_links * 100).toFixed(1) : '0',
+          viewRate: linkStats.total_links > 0 ? ((linkStats.viewed_links || 0) / linkStats.total_links * 100).toFixed(1) : '0',
+          tagRate: linkStats.total_links > 0 ? ((linkStats.tagged_links || 0) / linkStats.total_links * 100).toFixed(1) : '0'
+        }
+      });
+    });
+  });
+
   // Database browser interface
   server.get('/database', (req, res) => {
     res.send(`

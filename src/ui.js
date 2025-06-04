@@ -909,6 +909,10 @@ function showDatabaseBrowser() {
           </div>
         </div>
         
+        <div style="position: fixed; bottom: 10px; right: 10px;">
+          <button class="btn" onclick="showPulseCheck()" style="background: #666; font-size: 10px; padding: 4px 8px;">🔍 Debug</button>
+        </div>
+        
         <div id="results" class="loading">
           Loading 25 random unclicked links from the past week...
         </div>
@@ -1351,6 +1355,78 @@ function showDatabaseBrowser() {
               
               currentAngle += sliceAngle;
             });
+          }
+          
+          async function showPulseCheck() {
+            showLoading();
+            
+            try {
+              const response = await fetch('/api/debug/pulse-check');
+              const data = await response.json();
+              renderPulseCheck(data);
+            } catch (error) {
+              console.error('Error loading pulse check:', error);
+              document.getElementById('results').innerHTML = '<div class="loading">Error loading pulse check</div>';
+            }
+          }
+          
+          function renderPulseCheck(data) {
+            const resultsDiv = document.getElementById('results');
+            
+            const html = \`
+              <div style="padding: 20px; font-family: monospace;">
+                <h2 style="color: #00ff00; background: #000; padding: 10px; margin: 0 0 20px 0;">🔍 BOBrowser Pulse Check</h2>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                  <div style="background: #000; color: #00ff00; padding: 15px; border-radius: 4px; border: 1px solid #333;">
+                    <h3 style="margin: 0 0 10px 0; color: #ff6b35;">🏷️ TOP 10 TAGS</h3>
+                    \${data.topTags.map(tag => \`<div>\${tag.count}x \${tag.tag}</div>\`).join('')}
+                  </div>
+                  
+                  <div style="background: #000; color: #00ff00; padding: 15px; border-radius: 4px; border: 1px solid #333;">
+                    <h3 style="margin: 0 0 10px 0; color: #3498db;">🔗 TOP 5 CLICKED LINKS</h3>
+                    \${data.topClicked.map(link => \`<div style="font-size: 12px; margin-bottom: 5px;">\${link.click_count} clicks - \${link.title.substring(0, 40)}...</div>\`).join('')}
+                  </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                  <div style="background: #000; color: #00ff00; padding: 15px; border-radius: 4px; border: 1px solid #333;">
+                    <h3 style="margin: 0 0 10px 0; color: #28a745;">👀 TOP 5 VIEWED LINKS</h3>
+                    \${data.topViewed.map(link => \`<div style="font-size: 12px; margin-bottom: 5px;">\${link.view_count} views - \${link.title.substring(0, 40)}...</div>\`).join('')}
+                  </div>
+                  
+                  <div style="background: #000; color: #00ff00; padding: 15px; border-radius: 4px; border: 1px solid #333;">
+                    <h3 style="margin: 0 0 10px 0; color: #ffc107;">📊 OVERVIEW</h3>
+                    <div>Total unique tags: \${data.stats.uniqueTags}</div>
+                    <div>Stories with tags: \${data.stats.taggedLinks}</div>
+                    <div>Total links: \${data.stats.totalLinks}</div>
+                    <div>Total clicks: \${data.stats.totalClicks}</div>
+                    <div>Viewed links: \${data.stats.viewedLinks}</div>
+                    <div>Untagged links: \${data.stats.untaggedLinks}</div>
+                  </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                  <div style="background: #000; color: #00ff00; padding: 15px; border-radius: 4px; border: 1px solid #333;">
+                    <h3 style="margin: 0 0 10px 0; color: #00bcd4;">⚡ QUICK STATS</h3>
+                    <div>Click rate: \${data.rates.clickRate}%</div>
+                    <div>View rate: \${data.rates.viewRate}%</div>
+                    <div>Tag rate: \${data.rates.tagRate}%</div>
+                  </div>
+                  
+                  <div style="background: #000; color: #00ff00; padding: 15px; border-radius: 4px; border: 1px solid #333;">
+                    <h3 style="margin: 0 0 10px 0; color: #9c27b0;">📡 SOURCES</h3>
+                    \${data.sources.map(source => \`<div>\${source.source}: \${source.count} links</div>\`).join('')}
+                  </div>
+                </div>
+                
+                <div style="margin-top: 20px; text-align: center; color: #666; font-size: 12px;">
+                  Generated at \${new Date().toLocaleString()}
+                </div>
+              </div>
+            \`;
+            
+            resultsDiv.innerHTML = html;
           }
           
           function setActiveFilter(activeBtn) {
