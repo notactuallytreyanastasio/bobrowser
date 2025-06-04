@@ -258,7 +258,6 @@ function trackLinkAppearance(story, source) {
     commentsUrl = `https://news.ycombinator.com/item?id=${story.id}`;
   }
   
-  console.log(`📊 TRACKING LINK APPEARANCE: [${source.toUpperCase()}] Story ID: ${storyId}, Title: "${story.title || 'Untitled'}"`);
   
   // Check if link already exists
   db.get('SELECT id, times_appeared FROM links WHERE story_id = ? AND source = ?', [storyId, source], (err, row) => {
@@ -490,7 +489,14 @@ function addTagToStory(storyId, tag) {
           
           db.run('UPDATE stories SET tags = ? WHERE story_id = ?', [updatedTags, normalizedStoryId], (err) => {
             if (err) {
-              console.error('Error adding tag:', err);
+              console.error('Error adding tag to stories:', err);
+            }
+          });
+          
+          // Also update the links table for consistency
+          db.run('UPDATE links SET tags = ? WHERE story_id = ?', [updatedTags, normalizedStoryId], (err) => {
+            if (err) {
+              console.error('Error adding tag to links:', err);
             }
           });
         }
@@ -782,6 +788,50 @@ function clearAllData(callback) {
   });
 }
 
+/**
+ * Clear all tags from the database
+ */
+function clearAllTags(callback) {
+  if (!db) {
+    console.error('Database not initialized');
+    if (callback) callback(new Error('Database not initialized'));
+    return;
+  }
+
+  console.log('🗑️ Clearing all tags from database...');
+  
+  db.serialize(() => {
+    // Clear tags from stories table
+    db.run('UPDATE stories SET tags = NULL', (err) => {
+      if (err) {
+        console.error('Error clearing tags from stories:', err);
+      } else {
+        console.log('✅ Tags cleared from stories table');
+      }
+    });
+    
+    // Clear tags from links table
+    db.run('UPDATE links SET tags = NULL', (err) => {
+      if (err) {
+        console.error('Error clearing tags from links:', err);
+      } else {
+        console.log('✅ Tags cleared from links table');
+      }
+    });
+    
+    // Clear tags from clicks table
+    db.run('UPDATE clicks SET tags = NULL', (err) => {
+      if (err) {
+        console.error('Error clearing tags from clicks:', err);
+      } else {
+        console.log('✅ Tags cleared from clicks table');
+        console.log('🎉 All tags cleared successfully');
+        if (callback) callback();
+      }
+    });
+  });
+}
+
 module.exports = {
   initDatabase,
   generateArchiveSubmissionUrl,
@@ -808,5 +858,6 @@ module.exports = {
   trackSavedArticleClick,
   getDatabase,
   clearModuleCache,
-  clearAllData
+  clearAllData,
+  clearAllTags
 };

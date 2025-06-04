@@ -295,6 +295,72 @@ function initApiServer() {
     });
   });
 
+  // Get all tags with counts
+  server.get('/api/database/tags', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    // Query to get all tags and their occurrence counts from the stories table
+    db.all(`SELECT 
+      tags,
+      COUNT(*) as count
+    FROM stories 
+    WHERE tags IS NOT NULL AND tags != ''
+    GROUP BY tags
+    ORDER BY count DESC, tags ASC`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        // Parse comma-separated tags and count them
+        const tagCounts = {};
+        
+        rows.forEach(row => {
+          if (row.tags) {
+            const tags = row.tags.split(',').map(tag => tag.trim()).filter(tag => tag);
+            tags.forEach(tag => {
+              tagCounts[tag] = (tagCounts[tag] || 0) + row.count;
+            });
+          }
+        });
+        
+        // Convert to array and sort by count descending
+        const sortedTags = Object.entries(tagCounts)
+          .map(([tag, count]) => ({ tag, count }))
+          .sort((a, b) => b.count - a.count);
+        
+        res.json({ tags: sortedTags });
+      }
+    });
+  });
+
+  // Get random unclicked links from past week (default view)
+  server.get('/api/database/discover', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    // Get 25 random unclicked links from the past week
+    db.all(`SELECT 
+      l.*,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id) as total_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') as article_clicks,
+      (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'engage') as engagements
+    FROM links l 
+    WHERE (SELECT COUNT(*) FROM clicks c WHERE c.link_id = l.id AND c.click_type = 'article') = 0
+    AND l.last_seen_at >= datetime('now', '-7 days')
+    ORDER BY RANDOM()
+    LIMIT 25`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ links: rows });
+      }
+    });
+  });
+
   // Database browser interface
   server.get('/database', (req, res) => {
     res.send(`

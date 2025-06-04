@@ -165,9 +165,9 @@ async function updateMenu() {
   const allPinboardStories = await fetchPinboardPopular();
   
   // Story distribution optimized for menu length
-  const stories = allStories.slice(0, 12); // Top 12 HN stories
-  const redditStories = allRedditStories.slice(0, 14); // Top 14 Reddit stories
-  const pinboardStories = allPinboardStories.slice(0, 11); // Top 11 Pinboard stories
+  const stories = allStories.slice(0, 13); // Top 13 HN stories
+  const redditStories = allRedditStories.slice(0, 15); // Top 15 Reddit stories
+  const pinboardStories = allPinboardStories.slice(0, 12); // Top 12 Pinboard stories
   
   console.log('Limited stories for menu:', stories.length, 'HN,', redditStories.length, 'Reddit,', pinboardStories.length, 'Pinboard');
   console.log('Total fetched:', allStories.length, 'HN,', allRedditStories.length, 'Reddit,', allPinboardStories.length, 'Pinboard');
@@ -218,12 +218,6 @@ async function updateMenu() {
     );
   }
 
-  menuTemplate.push(
-    {
-      label: `━━━ HACKER NEWS (${stories.length}) ━━━`,
-      enabled: false
-    }
-  );
   
   const storyItems = stories.map((story, index) => {
     console.log(`Creating HN story item ${index}:`, story.title);
@@ -276,14 +270,6 @@ async function updateMenu() {
   
   menuTemplate.push(...storyItems);
   
-  menuTemplate.push(
-    { type: 'separator' },
-    {
-      label: `━━━ REDDIT (${redditStories.length}) ━━━`,
-      enabled: false
-    }
-  );
-  
   const redditStoryItems = redditStories.map(story => ({
     label: `👽 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,
     click: () => {
@@ -322,14 +308,6 @@ async function updateMenu() {
   }));
   
   menuTemplate.push(...redditStoryItems);
-  
-  menuTemplate.push(
-    { type: 'separator' },
-    {
-      label: `━━━ PINBOARD (${pinboardStories.length}) ━━━`,
-      enabled: false
-    }
-  );
   
   const pinboardStoryItems = pinboardStories.map(story => ({
     label: `📌 ${story.title.length > 75 ? story.title.substring(0, 72) + '...' : story.title}`,

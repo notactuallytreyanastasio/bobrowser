@@ -689,20 +689,21 @@ function showDatabaseBrowser() {
             border-radius: 4px;
           }
           .btn {
-            background: #007acc;
+            background: #666;
             color: white;
             border: none;
-            padding: 6px 12px;
-            border-radius: 3px;
+            padding: 4px 8px;
+            border-radius: 2px;
             cursor: pointer;
-            font-size: 11px;
+            font-size: 9px;
             font-weight: 500;
+            text-transform: uppercase;
           }
           .btn:hover {
-            background: #005fa3;
+            background: #555;
           }
           .btn.active {
-            background: #003d6b;
+            background: #333;
           }
           .filter-btn {
             background: #666;
@@ -719,6 +720,31 @@ function showDatabaseBrowser() {
             background: #555;
           }
           .filter-btn.active {
+            background: #333;
+          }
+          .source-filters {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+            padding: 6px 8px;
+            background: #f0f0f0;
+            border-radius: 4px;
+          }
+          .source-btn {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 9px;
+            font-weight: 500;
+            text-transform: uppercase;
+          }
+          .source-btn:hover {
+            background: #555;
+          }
+          .source-btn.active {
             background: #333;
           }
           .loading {
@@ -812,6 +838,43 @@ function showDatabaseBrowser() {
             color: #666;
             font-size: 12px;
           }
+          .tags-section {
+            margin-bottom: 12px;
+            padding: 6px 8px;
+            background: #f8f8f8;
+            border-radius: 4px;
+            border-top: 1px solid #e0e0e0;
+          }
+          .tags-header {
+            font-size: 10px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+          }
+          .tags-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+          }
+          .tag-item {
+            background: #e8e8e8;
+            color: #444;
+            padding: 2px 5px;
+            border-radius: 2px;
+            font-size: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid #ddd;
+          }
+          .tag-item:hover {
+            background: #d0d0d0;
+            border-color: #bbb;
+          }
+          .tag-count {
+            color: #666;
+            font-weight: normal;
+          }
         </style>
       </head>
       <body>
@@ -829,8 +892,22 @@ function showDatabaseBrowser() {
           <button class="filter-btn active" onclick="clearFilters()">ALL TIME</button>
         </div>
         
+        <div class="source-filters">
+          <button class="source-btn" onclick="filterBySource('reddit')">REDDIT</button>
+          <button class="source-btn" onclick="filterBySource('hn')">HN</button>
+          <button class="source-btn" onclick="filterBySource('pinboard')">PINBOARD</button>
+          <button class="source-btn active" onclick="clearSourceFilter()">ALL SOURCES</button>
+        </div>
+        
+        <div class="tags-section">
+          <div class="tags-header">All Tags</div>
+          <div id="tagsContainer" class="tags-container">
+            <div class="loading" style="font-size: 8px; color: #999;">Loading tags...</div>
+          </div>
+        </div>
+        
         <div id="results" class="loading">
-          Click a button to browse links
+          Loading 25 random unclicked links from the past week...
         </div>
 
         <script>
@@ -838,6 +915,12 @@ function showDatabaseBrowser() {
           
           let currentLinks = []; // Store current results for filtering
           let currentTitle = ''; // Store current result set title
+          
+          // Load tags and discover view when page loads
+          window.addEventListener('DOMContentLoaded', () => {
+            loadTags();
+            loadDiscover();
+          });
           
           function openLink(url) {
             if (url) {
@@ -951,6 +1034,42 @@ function showDatabaseBrowser() {
             }
           }
           
+          async function loadTags() {
+            try {
+              const response = await fetch('http://127.0.0.1:3002/api/database/tags');
+              if (!response.ok) {
+                throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
+              }
+              const data = await response.json();
+              renderTags(data.tags || []);
+            } catch (error) {
+              console.error('Tags fetch error:', error);
+              document.getElementById('tagsContainer').innerHTML = \`<div class="loading" style="font-size: 8px; color: #999;">Error loading tags</div>\`;
+            }
+          }
+          
+          function renderTags(tags) {
+            const container = document.getElementById('tagsContainer');
+            
+            if (tags.length === 0) {
+              container.innerHTML = \`<div class="loading" style="font-size: 8px; color: #999;">No tags found</div>\`;
+              return;
+            }
+            
+            const tagsHtml = tags.map(tagData => \`
+              <div class="tag-item" onclick="filterByTag('\${tagData.tag}')">
+                \${tagData.tag} <span class="tag-count">(\${tagData.count})</span>
+              </div>
+            \`).join('');
+            
+            container.innerHTML = tagsHtml;
+          }
+          
+          function filterByTag(tag) {
+            // For now, just show an alert - you could implement tag filtering here
+            alert(\`Filtering by tag: \${tag}\`);
+          }
+          
           async function loadBagOfLinks() {
             setActiveButton(event.target);
             showLoading();
@@ -977,6 +1096,12 @@ function showDatabaseBrowser() {
             showLoading();
             const links = await fetchData('/api/database/all');
             renderResults(links, 'All Links');
+          }
+          
+          async function loadDiscover() {
+            showLoading();
+            const links = await fetchData('/api/database/discover');
+            renderResults(links, '25 Random Unclicked Links (Past Week)');
           }
           
           function setActiveFilter(activeBtn) {
@@ -1007,6 +1132,37 @@ function showDatabaseBrowser() {
           
           function clearFilters() {
             setActiveFilter(event.target);
+            
+            if (currentLinks.length === 0) {
+              return; // No data to restore
+            }
+            
+            renderFilteredResults(currentLinks, currentTitle);
+          }
+          
+          function setActiveSourceFilter(activeBtn) {
+            document.querySelectorAll('.source-btn').forEach(btn => {
+              btn.classList.remove('active');
+            });
+            activeBtn.classList.add('active');
+          }
+          
+          function filterBySource(source) {
+            setActiveSourceFilter(event.target);
+            
+            if (currentLinks.length === 0) {
+              return; // No data to filter
+            }
+            
+            const filteredLinks = currentLinks.filter(link => {
+              return link.source === source;
+            });
+            
+            renderFilteredResults(filteredLinks, \`\${currentTitle} (\${source.toUpperCase()} only)\`);
+          }
+          
+          function clearSourceFilter() {
+            setActiveSourceFilter(event.target);
             
             if (currentLinks.length === 0) {
               return; // No data to restore
