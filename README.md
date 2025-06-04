@@ -1,4 +1,6 @@
 # BOBrowser
+<img width="1606" alt="Screenshot 2025-06-04 at 1 50 10 AM" src="https://github.com/user-attachments/assets/56c35ea4-76a8-41fa-9bbd-7bd0a60e732a" />
+
 A Bob browser. I dont know, its a batching of links from places I am likely to click.
 
 It presents itself as a simple tray icon in the system bar.
