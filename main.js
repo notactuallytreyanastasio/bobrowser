@@ -21,6 +21,7 @@ const { Module } = require('module');
 const { initDatabase } = require('./src/database');
 const { createTray } = require('./src/menu');
 const { initApiServer } = require('./src/api-server');
+const { startBackgroundTagging } = require('./src/background-tagger');
 
 // Development hot reload
 if (process.env.NODE_ENV === 'development') {
@@ -60,6 +61,13 @@ app.whenReady().then(() => {
     
     // Setup IPC handlers
     setupIpcHandlers();
+    
+    // Start background tagging service
+    if (process.env.ENABLE_BACKGROUND_TAGGING !== 'false') {
+      console.log('🏷️ Starting background tagging service...');
+      startBackgroundTagging();
+    }
+    
     console.log('✅ App initialization complete');
   });
 });

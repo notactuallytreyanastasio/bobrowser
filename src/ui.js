@@ -884,6 +884,7 @@ function showDatabaseBrowser() {
           <button class="btn" onclick="loadUnread()">📖 Unread</button>
           <button class="btn" onclick="loadRecent()">🕒 Recent</button>
           <button class="btn" onclick="loadAll()">📋 All</button>
+          <button class="btn" onclick="showAnalytics()">📊 Analytics</button>
         </div>
         
         <div class="filters">
@@ -1152,6 +1153,204 @@ function showDatabaseBrowser() {
             showLoading();
             const links = await fetchData('/api/database/discover');
             renderResults(links, '25 Random Unclicked Links (Past Week)');
+          }
+          
+          async function showAnalytics() {
+            setActiveButton(event.target);
+            showLoading();
+            
+            try {
+              const [clicksPerDay, clicksPerSource, tagStats] = await Promise.all([
+                fetch('/api/analytics/clicks-per-day').then(r => r.json()),
+                fetch('/api/analytics/clicks-per-day-per-source').then(r => r.json()),
+                fetch('/api/analytics/tag-stats').then(r => r.json())
+              ]);
+              
+              renderAnalytics(clicksPerDay.data, clicksPerSource.data, tagStats.data);
+            } catch (error) {
+              console.error('Error loading analytics:', error);
+              document.getElementById('results').innerHTML = '<div class="loading">Error loading analytics</div>';
+            }
+          }
+          
+          function renderAnalytics(clicksPerDay, clicksPerSource, tagStats) {
+            const resultsDiv = document.getElementById('results');
+            
+            // Prepare clicks per day chart data
+            const dailyLabels = clicksPerDay.map(d => d.date).reverse();
+            const dailyData = clicksPerDay.map(d => d.click_count).reverse();
+            
+            // Prepare clicks per source data
+            const sourceData = {};
+            clicksPerSource.forEach(row => {
+              if (!sourceData[row.date]) sourceData[row.date] = {};
+              sourceData[row.date][row.source] = row.click_count;
+            });
+            
+            const html = \`
+              <div style="padding: 20px;">
+                <h2>📊 Analytics Dashboard</h2>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+                  <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3>📈 Clicks Per Day (Last 30 Days)</h3>
+                    <canvas id="clicksChart" width="400" height="200"></canvas>
+                  </div>
+                  
+                  <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3>🎯 Clicks by Source</h3>
+                    <canvas id="sourceChart" width="400" height="200"></canvas>
+                  </div>
+                </div>
+                
+                <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                  <h3>🏷️ Tag Statistics</h3>
+                  <div style="max-height: 300px; overflow-y: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                      <thead>
+                        <tr style="background: #f5f5f5;">
+                          <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Tag</th>
+                          <th style="padding: 8px; text-align: right; border-bottom: 1px solid #ddd;">Stories</th>
+                          <th style="padding: 8px; text-align: right; border-bottom: 1px solid #ddd;">View Rate</th>
+                          <th style="padding: 8px; text-align: right; border-bottom: 1px solid #ddd;">Avg Appearances</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        \${tagStats.slice(0, 20).map(tag => \`
+                          <tr>
+                            <td style="padding: 8px; border-bottom: 1px solid #eee;">
+                              <span style="background: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 3px; font-size: 12px;">
+                                \${tag.tag}
+                              </span>
+                            </td>
+                            <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee;">\${tag.story_count}</td>
+                            <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee;">\${tag.view_rate}%</td>
+                            <td style="padding: 8px; text-align: right; border-bottom: 1px solid #eee;">\${tag.avg_appearances}</td>
+                          </tr>
+                        \`).join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            \`;
+            
+            resultsDiv.innerHTML = html;
+            
+            // Simple ASCII chart for clicks per day
+            setTimeout(() => {
+              drawSimpleChart('clicksChart', dailyLabels, dailyData, 'Clicks');
+              drawSourceChart('sourceChart', clicksPerSource);
+            }, 100);
+          }
+          
+          function drawSimpleChart(canvasId, labels, data, label) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            const padding = 40;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, width, height);
+            
+            if (data.length === 0) {
+              ctx.fillStyle = '#666';
+              ctx.font = '14px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText('No data available', width/2, height/2);
+              return;
+            }
+            
+            const maxValue = Math.max(...data);
+            const chartWidth = width - 2 * padding;
+            const chartHeight = height - 2 * padding;
+            
+            // Draw axes
+            ctx.strokeStyle = '#ddd';
+            ctx.beginPath();
+            ctx.moveTo(padding, padding);
+            ctx.lineTo(padding, height - padding);
+            ctx.lineTo(width - padding, height - padding);
+            ctx.stroke();
+            
+            // Draw bars
+            const barWidth = chartWidth / data.length * 0.8;
+            const barSpacing = chartWidth / data.length;
+            
+            data.forEach((value, index) => {
+              const barHeight = (value / maxValue) * chartHeight;
+              const x = padding + index * barSpacing + barSpacing * 0.1;
+              const y = height - padding - barHeight;
+              
+              ctx.fillStyle = '#3498db';
+              ctx.fillRect(x, y, barWidth, barHeight);
+              
+              // Draw value on top
+              ctx.fillStyle = '#333';
+              ctx.font = '10px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText(value.toString(), x + barWidth/2, y - 5);
+            });
+          }
+          
+          function drawSourceChart(canvasId, sourceData) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Aggregate totals by source
+            const totals = {};
+            sourceData.forEach(row => {
+              totals[row.source] = (totals[row.source] || 0) + row.click_count;
+            });
+            
+            const sources = Object.keys(totals);
+            const colors = ['#ff6b35', '#f7931e', '#1f77b4'];
+            
+            if (sources.length === 0) {
+              ctx.fillStyle = '#666';
+              ctx.font = '14px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText('No source data available', canvas.width/2, canvas.height/2);
+              return;
+            }
+            
+            // Simple pie chart
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) - 40;
+            
+            const total = Object.values(totals).reduce((a, b) => a + b, 0);
+            let currentAngle = 0;
+            
+            sources.forEach((source, index) => {
+              const sliceAngle = (totals[source] / total) * 2 * Math.PI;
+              
+              ctx.beginPath();
+              ctx.moveTo(centerX, centerY);
+              ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
+              ctx.closePath();
+              
+              ctx.fillStyle = colors[index % colors.length];
+              ctx.fill();
+              
+              // Label
+              const labelAngle = currentAngle + sliceAngle / 2;
+              const labelX = centerX + Math.cos(labelAngle) * (radius + 20);
+              const labelY = centerY + Math.sin(labelAngle) * (radius + 20);
+              
+              ctx.fillStyle = '#333';
+              ctx.font = '12px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText(\`\${source.toUpperCase()}: \${totals[source]}\`, labelX, labelY);
+              
+              currentAngle += sliceAngle;
+            });
           }
           
           function setActiveFilter(activeBtn) {

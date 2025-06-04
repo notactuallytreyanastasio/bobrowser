@@ -444,6 +444,128 @@ function initApiServer() {
     }
   });
 
+  // Analytics endpoints
+  
+  // Clicks per day
+  server.get('/api/analytics/clicks-per-day', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    db.all(`SELECT 
+      DATE(clicked_at) as date,
+      COUNT(*) as click_count
+    FROM clicks 
+    WHERE clicked_at IS NOT NULL
+    GROUP BY DATE(clicked_at)
+    ORDER BY date DESC
+    LIMIT 30`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ data: rows });
+      }
+    });
+  });
+
+  // Clicks per day per source
+  server.get('/api/analytics/clicks-per-day-per-source', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    db.all(`SELECT 
+      DATE(c.clicked_at) as date,
+      l.source,
+      COUNT(*) as click_count
+    FROM clicks c
+    JOIN links l ON c.link_id = l.id
+    WHERE c.clicked_at IS NOT NULL AND l.source IS NOT NULL
+    GROUP BY DATE(c.clicked_at), l.source
+    ORDER BY date DESC, l.source
+    LIMIT 90`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ data: rows });
+      }
+    });
+  });
+
+  // Tag statistics
+  server.get('/api/analytics/tag-stats', (req, res) => {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    // Get tag usage stats
+    db.all(`SELECT 
+      tags,
+      COUNT(*) as story_count,
+      SUM(CASE WHEN viewed = 1 THEN 1 ELSE 0 END) as viewed_count,
+      SUM(engagement_count) as total_engagements,
+      AVG(times_appeared) as avg_appearances
+    FROM links 
+    WHERE tags IS NOT NULL AND tags != ''
+    GROUP BY tags
+    ORDER BY story_count DESC
+    LIMIT 50`, [], (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        // Parse comma-separated tags and aggregate stats
+        const tagStats = {};
+        
+        rows.forEach(row => {
+          if (row.tags) {
+            const tags = row.tags.split(',').map(tag => tag.trim()).filter(tag => tag);
+            tags.forEach(tag => {
+              if (!tagStats[tag]) {
+                tagStats[tag] = {
+                  tag: tag,
+                  story_count: 0,
+                  viewed_count: 0,
+                  total_engagements: 0,
+                  total_appearances: 0
+                };
+              }
+              tagStats[tag].story_count += row.story_count;
+              tagStats[tag].viewed_count += row.viewed_count || 0;
+              tagStats[tag].total_engagements += row.total_engagements || 0;
+              tagStats[tag].total_appearances += (row.avg_appearances || 0) * row.story_count;
+            });
+          }
+        });
+
+        // Convert to array and add calculated metrics
+        const sortedStats = Object.values(tagStats).map(stat => ({
+          ...stat,
+          engagement_rate: stat.story_count > 0 ? (stat.total_engagements / stat.story_count).toFixed(2) : 0,
+          view_rate: stat.story_count > 0 ? (stat.viewed_count / stat.story_count * 100).toFixed(1) : 0,
+          avg_appearances: stat.story_count > 0 ? (stat.total_appearances / stat.story_count).toFixed(1) : 0
+        })).sort((a, b) => b.story_count - a.story_count);
+
+        res.json({ data: sortedStats });
+      }
+    });
+  });
+
+  // Background tagging endpoints
+  server.get('/api/background-tagging/status', (req, res) => {
+    const { getTaggingStatus } = require('./background-tagger');
+    res.json(getTaggingStatus());
+  });
+
+  server.post('/api/background-tagging/trigger', (req, res) => {
+    const { triggerManualTagging } = require('./background-tagger');
+    triggerManualTagging()
+      .then(() => res.json({ success: true, message: 'Manual tagging triggered' }))
+      .catch(err => res.status(500).json({ error: err.message }));
+  });
+
   // Database browser interface
   server.get('/database', (req, res) => {
     res.send(`
