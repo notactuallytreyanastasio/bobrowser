@@ -922,10 +922,47 @@ function showDatabaseBrowser() {
             loadDiscover();
           });
           
-          function openLink(url) {
+          function openLink(url, storyId, source, title) {
             if (url) {
+              // Check if this link has been clicked before by looking at the current link data
+              const linkData = currentLinks.find(link => link.url === url);
+              
+              if (linkData && !linkData.viewed && linkData.total_clicks === 0) {
+                // This is an unclicked link - trigger Claude tagging
+                console.log('Triggering Claude tagging for unclicked link:', title);
+                
+                // Send IPC message to main process to show Claude tagging window
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.send('show-claude-tags', {
+                  storyId: storyId || linkData.story_id,
+                  title: title || linkData.title,
+                  url: url,
+                  source: source || linkData.source
+                });
+              }
+              
+              // Track the click in the database
+              trackLinkClick(url, storyId, source);
+              
+              // Open the link
               shell.openExternal(url);
             }
+          }
+          
+          function trackLinkClick(url, storyId, source) {
+            // Send click tracking to the API server
+            fetch('http://127.0.0.1:3002/api/database/track-click', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                url: url,
+                storyId: storyId,
+                source: source,
+                clickType: 'article'
+              })
+            }).catch(err => console.error('Error tracking click:', err));
           }
           
           function truncateTitle(title, maxLength = 100) {
@@ -986,10 +1023,10 @@ function showDatabaseBrowser() {
                     return \`
                       <tr>
                         <td>
-                          <a href="#" onclick="openLink('\${link.url}')" class="title-link \${titleClass}">
+                          <a href="#" onclick="openLink('\${link.url}', '\${link.story_id}', '\${link.source}', '\${link.title.replace(/'/g, "\\'")}')\" class="title-link \${titleClass}">
                             \${truncateTitle(link.title)}
                           </a>
-                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}')" class="comments-link">[comments]</a>\` : ''}
+                          \${hasComments ? \`<a href="#" onclick="openLink('\${link.comments_url}', '\${link.story_id}', '\${link.source}', '\${link.title.replace(/'/g, "\\'")}')\" class="comments-link">[comments]</a>\` : ''}
                         </td>
                         <td>
                           <span class="source-badge \${sourceClass}">\${link.source || 'unknown'}</span>

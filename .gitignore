@@ -3,3 +3,4 @@ clicks.db
 .env
 .DS_Store
 *.swp
+dist/

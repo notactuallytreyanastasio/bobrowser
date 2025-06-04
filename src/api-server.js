@@ -361,6 +361,30 @@ function initApiServer() {
     });
   });
 
+  // Track click from database browser
+  server.post('/api/database/track-click', (req, res) => {
+    const { url, storyId, source, clickType = 'article' } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    const { trackArticleClick, markLinkAsViewed } = require('./database');
+    
+    try {
+      // Track the click
+      if (clickType === 'article') {
+        trackArticleClick(storyId, source);
+        markLinkAsViewed(storyId, source);
+      }
+      
+      res.json({ success: true, message: 'Click tracked successfully' });
+    } catch (error) {
+      console.error('Error tracking click:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Database browser interface
   server.get('/database', (req, res) => {
     res.send(`

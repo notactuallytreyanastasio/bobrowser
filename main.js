@@ -54,8 +54,23 @@ app.whenReady().then(() => {
     if (process.env.ENABLE_API_SERVER !== 'false') {
       initApiServer();
     }
+    
+    // Setup IPC handlers
+    setupIpcHandlers();
   });
 });
+
+// Setup IPC handlers for cross-window communication
+function setupIpcHandlers() {
+  const { ipcMain } = require('electron');
+  const { showTagSuggestionWindow } = require('./src/claude-integration');
+  
+  // Handle Claude tagging request from database browser
+  ipcMain.on('show-claude-tags', (event, data) => {
+    const { storyId, title, url, source } = data;
+    showTagSuggestionWindow(storyId, title, url, source);
+  });
+}
 
 // Only add Electron event handlers if not in server mode
 if (process.env.NODE_ENV !== 'server' && !process.argv.includes('--server-only')) {

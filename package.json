@@ -8,6 +8,9 @@
     "dev": "NODE_ENV=development electron .",
     "prod": "electron .",
     "hot": "NODE_ENV=development nodemon --exec 'electron .' --watch src/ --ext js",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "dist": "npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -17,12 +20,38 @@
     "axios": "^1.9.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
-    "electron": "^36.3.2",
     "express": "^5.1.0",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
+    "electron": "^36.3.2",
+    "electron-builder": "^26.0.12",
     "electron-reload": "^2.0.0-alpha.1",
     "nodemon": "^3.0.0"
+  },
+  "build": {
+    "appId": "com.bobrowser.app",
+    "productName": "BOBrowser",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.news",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "${productName}"
+    }
   }
 }
